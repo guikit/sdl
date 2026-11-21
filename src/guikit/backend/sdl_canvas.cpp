@@ -26,7 +26,7 @@ SdlCanvas::SdlCanvas(SDL_Renderer* renderer) noexcept
 {
 }
 
-void SdlCanvas::Begin(keel::u32 width, keel::u32 height, float scale) {
+void SdlCanvas::Begin(keel::u32 width, keel::u32 height, keel::f32 scale) {
     m_width = width;
     m_height = height;
     m_scale = (scale > 0.0f) ? scale : 1.0f;
@@ -47,7 +47,7 @@ void SdlCanvas::End() {
     }
 }
 
-void SdlCanvas::SetScale(float scale) {
+void SdlCanvas::SetScale(keel::f32 scale) {
     m_scale = (scale > 0.0f) ? scale : 1.0f;
     if (m_renderer) {
         SDL_SetRenderScale(m_renderer, m_scale, m_scale);
@@ -88,10 +88,10 @@ void SdlCanvas::PushClip(Rect clipRect) {
     clipRect = Map(clipRect);
     if (!m_clipStack.empty()) {
         const Rect& parent = m_clipStack.back();
-        const float x1 = keel::max(parent.x, clipRect.x);
-        const float y1 = keel::max(parent.y, clipRect.y);
-        const float x2 = keel::min(parent.Right(), clipRect.Right());
-        const float y2 = keel::min(parent.Bottom(), clipRect.Bottom());
+        const keel::f32 x1 = keel::max(parent.x, clipRect.x);
+        const keel::f32 y1 = keel::max(parent.y, clipRect.y);
+        const keel::f32 x2 = keel::min(parent.Right(), clipRect.Right());
+        const keel::f32 y2 = keel::min(parent.Bottom(), clipRect.Bottom());
         m_clipStack.emplace_back(x1, y1, keel::max(0.0f, x2 - x1), keel::max(0.0f, y2 - y1));
     } else {
         m_clipStack.push_back(clipRect);
@@ -138,18 +138,18 @@ void SdlCanvas::FillRectBase(Rect rect, Color fill) {
 
 void SdlCanvas::DrawRoundRect(
     Rect rect,
-    float radius,
+    keel::f32 radius,
     Color fill,
     Color stroke,
-    float strokeWidth
+    keel::f32 strokeWidth
 ) {
     if (!m_renderer || rect.w <= 0.0f || rect.h <= 0.0f) return;
     rect = Map(rect);
     radius *= m_xfScale;
     strokeWidth *= m_xfScale;
 
-    const float maxRadius = keel::min(rect.w, rect.h) * 0.5f;
-    const float r = keel::clamp(radius, 0.0f, maxRadius);
+    const keel::f32 maxRadius = keel::min(rect.w, rect.h) * 0.5f;
+    const keel::f32 r = keel::clamp(radius, 0.0f, maxRadius);
 
     if (r <= 1.0f) {
         if (fill.a > 0) {
@@ -170,10 +170,10 @@ void SdlCanvas::DrawRoundRect(
 
     keel::SmallArray<SDL_FPoint, kPerimeterPoints + 1> perimeter;
 
-    const auto addArc = [&](float cx, float cy, float startAngle, float endAngle) {
+    const auto addArc = [&](keel::f32 cx, keel::f32 cy, keel::f32 startAngle, keel::f32 endAngle) {
         for (keel::i32 i = 0; i < kSegmentsPerCorner; ++i) {
-            const float t = static_cast<float>(i) / static_cast<float>(kSegmentsPerCorner);
-            const float angle = startAngle + t * (endAngle - startAngle);
+            const keel::f32 t = keel::as<keel::f32>(i) / keel::as<keel::f32>(kSegmentsPerCorner);
+            const keel::f32 angle = startAngle + t * (endAngle - startAngle);
             perimeter.push_back(SDL_FPoint{
                 cx + keel::cos(angle) * r,
                 cy + keel::sin(angle) * r
@@ -215,9 +215,9 @@ void SdlCanvas::DrawRoundRect(
             m_renderer,
             nullptr,
             vertices.data(),
-            static_cast<keel::i32>(vertices.size()),
+            keel::as<keel::i32>(vertices.size()),
             indices.data(),
-            static_cast<keel::i32>(indices.size())
+            keel::as<keel::i32>(indices.size())
         );
     }
 
@@ -225,24 +225,24 @@ void SdlCanvas::DrawRoundRect(
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(m_renderer, stroke.r, stroke.g, stroke.b, stroke.a);
         perimeter.push_back(perimeter.front()); // Close loop
-        SDL_RenderLines(m_renderer, perimeter.data(), static_cast<keel::i32>(perimeter.size()));
+        SDL_RenderLines(m_renderer, perimeter.data(), keel::as<keel::i32>(perimeter.size()));
     }
 }
 
-Vec2 SdlCanvas::MeasureText(keel::StringRef text, float fontSize) {
+Vec2 SdlCanvas::MeasureText(keel::StringRef text, keel::f32 fontSize) {
     if (fontSize <= 0.0f) {
         return {0.0f, 0.0f};
     }
-    const float totalAdvance = text.empty() ? 0.0f : static_cast<float>(text.length()) * (fontSize * kDefaultCharAdvanceRatio);
+    const keel::f32 totalAdvance = text.empty() ? 0.0f : keel::as<keel::f32>(text.length()) * (fontSize * kDefaultCharAdvanceRatio);
     return {totalAdvance, GetLineHeight(fontSize)};
 }
 
-float SdlCanvas::GetLineHeight(float fontSize) {
+keel::f32 SdlCanvas::GetLineHeight(keel::f32 fontSize) {
     if (fontSize <= 0.0f) return 0.0f;
     return fontSize * kDefaultLineHeightMultiplier;
 }
 
-void SdlCanvas::DrawText(keel::StringRef text, Vec2 pos, float fontSize, Color color) {
+void SdlCanvas::DrawText(keel::StringRef text, Vec2 pos, keel::f32 fontSize, Color color) {
     if (!m_renderer || text.empty() || fontSize <= 0.0f || color.a == 0) return;
 
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
@@ -255,10 +255,10 @@ void SdlCanvas::DrawText(keel::StringRef text, Vec2 pos, float fontSize, Color c
 void SdlCanvas::DrawTextBox(
     keel::StringRef text,
     Rect bounds,
-    float fontSize,
+    keel::f32 fontSize,
     Color color,
-    float alignX,
-    float alignY
+    keel::f32 alignX,
+    keel::f32 alignY
 ) {
     if (text.empty() || color.a == 0 || bounds.w <= 0.0f || bounds.h <= 0.0f) return;
 
@@ -270,15 +270,15 @@ void SdlCanvas::DrawTextBox(
     }
 
     const Vec2 dims = MeasureText(drawText, fontSize);
-    const float x = bounds.x + keel::max(0.0f, (bounds.w - dims.x) * alignX);
-    const float y = bounds.y + (bounds.h - dims.y) * alignY;
+    const keel::f32 x = bounds.x + keel::max(0.0f, (bounds.w - dims.x) * alignX);
+    const keel::f32 y = bounds.y + (bounds.h - dims.y) * alignY;
 
     PushClip(bounds);
     DrawText(drawText, {x, y}, fontSize, color);
     PopClip();
 }
 
-void SdlCanvas::DrawLine(Vec2 p1, Vec2 p2, Color color, float strokeWidth) {
+void SdlCanvas::DrawLine(Vec2 p1, Vec2 p2, Color color, keel::f32 strokeWidth) {
     if (!m_renderer || color.a == 0 || strokeWidth <= 0.0f) return;
     p1 = Map(p1);
     p2 = Map(p2);
@@ -290,12 +290,12 @@ void SdlCanvas::DrawLine(Vec2 p1, Vec2 p2, Color color, float strokeWidth) {
     if (strokeWidth <= 1.0f) {
         SDL_RenderLine(m_renderer, p1.x, p1.y, p2.x, p2.y);
     } else {
-        const float dx = p2.x - p1.x;
-        const float dy = p2.y - p1.y;
-        const float len = keel::hypot(dx, dy);
+        const keel::f32 dx = p2.x - p1.x;
+        const keel::f32 dy = p2.y - p1.y;
+        const keel::f32 len = keel::hypot(dx, dy);
         if (len > 0.001f) {
-            const float nx = -dy / len * (strokeWidth * 0.5f);
-            const float ny = dx / len * (strokeWidth * 0.5f);
+            const keel::f32 nx = -dy / len * (strokeWidth * 0.5f);
+            const keel::f32 ny = dx / len * (strokeWidth * 0.5f);
             const SDL_FPoint pts[5] = {
                 {p1.x + nx, p1.y + ny},
                 {p2.x + nx, p2.y + ny},

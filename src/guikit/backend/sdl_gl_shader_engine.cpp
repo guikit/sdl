@@ -95,11 +95,11 @@ struct GlProcs {
     void     (GUIKIT_GL_APIENTRY* UseProgram)(keel::u32 program) = nullptr;
     keel::i32      (GUIKIT_GL_APIENTRY* GetUniformLocation)(keel::u32 program, const char* name) = nullptr;
     void     (GUIKIT_GL_APIENTRY* Uniform1i)(keel::i32 location, keel::i32 v0) = nullptr;
-    void     (GUIKIT_GL_APIENTRY* Uniform1f)(keel::i32 location, float v0) = nullptr;
-    void     (GUIKIT_GL_APIENTRY* Uniform2f)(keel::i32 location, float v0, float v1) = nullptr;
-    void     (GUIKIT_GL_APIENTRY* Uniform3f)(keel::i32 location, float v0, float v1, float v2) = nullptr;
-    void     (GUIKIT_GL_APIENTRY* Uniform4f)(keel::i32 location, float v0, float v1, float v2, float v3) = nullptr;
-    void     (GUIKIT_GL_APIENTRY* Uniform4fv)(keel::i32 location, keel::i32 count, const float* value) = nullptr;
+    void     (GUIKIT_GL_APIENTRY* Uniform1f)(keel::i32 location, keel::f32 v0) = nullptr;
+    void     (GUIKIT_GL_APIENTRY* Uniform2f)(keel::i32 location, keel::f32 v0, keel::f32 v1) = nullptr;
+    void     (GUIKIT_GL_APIENTRY* Uniform3f)(keel::i32 location, keel::f32 v0, keel::f32 v1, keel::f32 v2) = nullptr;
+    void     (GUIKIT_GL_APIENTRY* Uniform4f)(keel::i32 location, keel::f32 v0, keel::f32 v1, keel::f32 v2, keel::f32 v3) = nullptr;
+    void     (GUIKIT_GL_APIENTRY* Uniform4fv)(keel::i32 location, keel::i32 count, const keel::f32* value) = nullptr;
     void     (GUIKIT_GL_APIENTRY* EnableVertexAttribArray)(keel::u32 index) = nullptr;
     void     (GUIKIT_GL_APIENTRY* DisableVertexAttribArray)(keel::u32 index) = nullptr;
     void     (GUIKIT_GL_APIENTRY* GetVertexAttribiv)(keel::u32 index, keel::u32 pname, keel::i32* params) = nullptr;
@@ -168,7 +168,7 @@ keel::u32 CompileGlShader(keel::u32 type, keel::StringRef src) noexcept {
     keel::u32 shader = g_gl.CreateShader(type);
     if (!shader) return 0;
     const char* ptr = src.data();
-    const keel::i32 len = static_cast<keel::i32>(src.size());
+    const keel::i32 len = keel::as<keel::i32>(src.size());
     g_gl.ShaderSource(shader, 1, &ptr, &len);
     g_gl.CompileShader(shader);
     keel::i32 compiled = 0;
@@ -245,8 +245,8 @@ void main() {
 }
 )";
 
-[[nodiscard]] inline keel::u32 PackRG16Norm(float normVal) noexcept {
-    const float clamped = keel::clamp(normVal, 0.0f, 1.0f);
+[[nodiscard]] inline keel::u32 PackRG16Norm(keel::f32 normVal) noexcept {
+    const keel::f32 clamped = keel::clamp(normVal, 0.0f, 1.0f);
     const keel::u32 q = keel::round_u32(clamped * 65535.0f);
     const keel::u32 hi = (q >> 8) & 0xFFu;
     const keel::u32 lo = q & 0xFFu;
@@ -298,7 +298,7 @@ bool SdlGlShaderEngine::Initialize(SDL_Renderer* renderer) {
     g_gl.DeleteProgram(probeProgram);
 
     // Create static unit quad VBO (2 triangles covering [0..1]x[0..1])
-    constexpr float kQuadVerts[12] = {
+    constexpr keel::f32 kQuadVerts[12] = {
         0.0f, 0.0f,
         1.0f, 0.0f,
         0.0f, 1.0f,
@@ -312,7 +312,7 @@ bool SdlGlShaderEngine::Initialize(SDL_Renderer* renderer) {
     g_gl.GenBuffers(1, &m_quadVbo);
     g_gl.BindBuffer(kGL_ARRAY_BUFFER, m_quadVbo);
     g_gl.BufferData(kGL_ARRAY_BUFFER, sizeof(kQuadVerts), kQuadVerts, kGL_STATIC_DRAW);
-    g_gl.BindBuffer(kGL_ARRAY_BUFFER, static_cast<keel::u32>(prevVbo));
+    g_gl.BindBuffer(kGL_ARRAY_BUFFER, keel::as<keel::u32>(prevVbo));
 
     SDL_FlushRenderer(renderer);
 
@@ -484,9 +484,9 @@ void SdlGlShaderEngine::RenderPass(
         return;
     }
 
-    const keel::u32 texW = static_cast<keel::u32>(pass.dataField.extent(1));
-    const keel::u32 texH = static_cast<keel::u32>(pass.dataField.extent(0));
-    const keel::ArrayRef<float> flatData = pass.dataField.flat();
+    const keel::u32 texW = keel::as<keel::u32>(pass.dataField.extent(1));
+    const keel::u32 texH = keel::as<keel::u32>(pass.dataField.extent(0));
+    const keel::ArrayRef<keel::f32> flatData = pass.dataField.flat();
 
     const CompiledProgram* prog = GetOrCompileProgram(pass.shader);
     if (!prog) {
@@ -503,11 +503,11 @@ void SdlGlShaderEngine::RenderPass(
         if (!cache.lutTex) {
             g_gl.GenTextures(1, &cache.lutTex);
             g_gl.BindTexture(kGL_TEXTURE_2D, cache.lutTex);
-            g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_MIN_FILTER, static_cast<keel::i32>(kGL_LINEAR));
-            g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_MAG_FILTER, static_cast<keel::i32>(kGL_LINEAR));
-            g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_WRAP_S, static_cast<keel::i32>(kGL_CLAMP_TO_EDGE));
-            g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_WRAP_T, static_cast<keel::i32>(kGL_CLAMP_TO_EDGE));
-            g_gl.TexImage2D(kGL_TEXTURE_2D, 0, static_cast<keel::i32>(kGL_RGBA), 256, 1, 0, kGL_RGBA, kGL_UNSIGNED_BYTE, pass.lutAbgr256.data());
+            g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_MIN_FILTER, keel::as<keel::i32>(kGL_LINEAR));
+            g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_MAG_FILTER, keel::as<keel::i32>(kGL_LINEAR));
+            g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_WRAP_S, keel::as<keel::i32>(kGL_CLAMP_TO_EDGE));
+            g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_WRAP_T, keel::as<keel::i32>(kGL_CLAMP_TO_EDGE));
+            g_gl.TexImage2D(kGL_TEXTURE_2D, 0, keel::as<keel::i32>(kGL_RGBA), 256, 1, 0, kGL_RGBA, kGL_UNSIGNED_BYTE, pass.lutAbgr256.data());
             cache.uploadedColormapId = pass.colormapId;
         } else {
             g_gl.BindTexture(kGL_TEXTURE_2D, cache.lutTex);
@@ -531,15 +531,15 @@ void SdlGlShaderEngine::RenderPass(
         cache.uploadedSliceGen = 0;
 
         g_gl.BindTexture(kGL_TEXTURE_2D, cache.dataTex);
-        g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_MIN_FILTER, static_cast<keel::i32>(kGL_NEAREST));
-        g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_MAG_FILTER, static_cast<keel::i32>(kGL_NEAREST));
-        g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_WRAP_S, static_cast<keel::i32>(kGL_CLAMP_TO_EDGE));
-        g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_WRAP_T, static_cast<keel::i32>(kGL_CLAMP_TO_EDGE));
+        g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_MIN_FILTER, keel::as<keel::i32>(kGL_NEAREST));
+        g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_MAG_FILTER, keel::as<keel::i32>(kGL_NEAREST));
+        g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_WRAP_S, keel::as<keel::i32>(kGL_CLAMP_TO_EDGE));
+        g_gl.TexParameteri(kGL_TEXTURE_2D, kGL_TEXTURE_WRAP_T, keel::as<keel::i32>(kGL_CLAMP_TO_EDGE));
     } else {
         g_gl.BindTexture(kGL_TEXTURE_2D, cache.dataTex);
     }
 
-    const float invNormScale = 1.0f / keel::max(1e-6f, pass.dataNormScale);
+    const keel::f32 invNormScale = 1.0f / keel::max(1e-6f, pass.dataNormScale);
     const bool needFullUpload = dimsChanged || (cache.uploadedFullGen != pass.fullGeneration);
     const keel::u64 deltaSlices = (pass.sliceGeneration > 0 && pass.sliceGeneration >= cache.uploadedSliceGen)
         ? (pass.sliceGeneration - cache.uploadedSliceGen)
@@ -549,16 +549,16 @@ void SdlGlShaderEngine::RenderPass(
         const keel::usize total = flatData.size();
         m_uploadScratch.resize(total);
         for (keel::usize i = 0; i < total; ++i) {
-            const float normVal = (flatData[i] - pass.dataNormOffset) * invNormScale;
+            const keel::f32 normVal = (flatData[i] - pass.dataNormOffset) * invNormScale;
             m_uploadScratch[i] = PackRG16Norm(normVal);
         }
         if (dimsChanged) {
-            g_gl.TexImage2D(kGL_TEXTURE_2D, 0, static_cast<keel::i32>(kGL_RGBA),
-                            static_cast<keel::i32>(texW), static_cast<keel::i32>(texH),
+            g_gl.TexImage2D(kGL_TEXTURE_2D, 0, keel::as<keel::i32>(kGL_RGBA),
+                            keel::as<keel::i32>(texW), keel::as<keel::i32>(texH),
                             0, kGL_RGBA, kGL_UNSIGNED_BYTE, m_uploadScratch.data());
         } else {
             g_gl.TexSubImage2D(kGL_TEXTURE_2D, 0, 0, 0,
-                               static_cast<keel::i32>(texW), static_cast<keel::i32>(texH),
+                               keel::as<keel::i32>(texW), keel::as<keel::i32>(texH),
                                kGL_RGBA, kGL_UNSIGNED_BYTE, m_uploadScratch.data());
         }
         cache.uploadedFullGen = pass.fullGeneration;
@@ -571,16 +571,16 @@ void SdlGlShaderEngine::RenderPass(
         // O(1) Circular Ring-Buffer Update: upload only the newly written row(s) via glTexSubImage2D
         m_uploadScratch.resize(texW);
         for (keel::u64 s = 0; s < deltaSlices; ++s) {
-            const keel::u32 rowIdx = static_cast<keel::u32>(
-                (static_cast<keel::u64>(pass.headRow) + static_cast<keel::u64>(texH) * 4ULL - s) % texH
+            const keel::u32 rowIdx = keel::as<keel::u32>(
+                (keel::as<keel::u64>(pass.headRow) + keel::as<keel::u64>(texH) * 4ULL - s) % texH
             );
-            const keel::ArrayRef<float> rowSrc = pass.dataField.row(rowIdx);
+            const keel::ArrayRef<keel::f32> rowSrc = pass.dataField.row(rowIdx);
             for (keel::u32 x = 0; x < texW; ++x) {
-                const float normVal = (rowSrc[x] - pass.dataNormOffset) * invNormScale;
+                const keel::f32 normVal = (rowSrc[x] - pass.dataNormOffset) * invNormScale;
                 m_uploadScratch[x] = PackRG16Norm(normVal);
             }
-            g_gl.TexSubImage2D(kGL_TEXTURE_2D, 0, 0, static_cast<keel::i32>(rowIdx),
-                               static_cast<keel::i32>(texW), 1,
+            g_gl.TexSubImage2D(kGL_TEXTURE_2D, 0, 0, keel::as<keel::i32>(rowIdx),
+                               keel::as<keel::i32>(texW), 1,
                                kGL_RGBA, kGL_UNSIGNED_BYTE, m_uploadScratch.data());
         }
         cache.uploadedSliceGen = pass.sliceGeneration;
@@ -590,34 +590,34 @@ void SdlGlShaderEngine::RenderPass(
     // 3. Configure Scissor Box (converting top-left UI coords to bottom-left GL coords)
     const keel::i32 scX = keel::max(0, keel::floor_i32(pass.clipRect.x));
     const keel::i32 scTop = keel::max(0, keel::floor_i32(pass.clipRect.y));
-    const keel::i32 scRight = keel::min(static_cast<keel::i32>(viewportW), keel::ceil_i32(pass.clipRect.Right()));
-    const keel::i32 scBottom = keel::min(static_cast<keel::i32>(viewportH), keel::ceil_i32(pass.clipRect.Bottom()));
+    const keel::i32 scRight = keel::min(keel::as<keel::i32>(viewportW), keel::ceil_i32(pass.clipRect.Right()));
+    const keel::i32 scBottom = keel::min(keel::as<keel::i32>(viewportH), keel::ceil_i32(pass.clipRect.Bottom()));
     const keel::i32 scW = scRight - scX;
     const keel::i32 scH = scBottom - scTop;
     if (scW <= 0 || scH <= 0) return;
 
-    const keel::i32 glScY = static_cast<keel::i32>(viewportH) - scBottom;
+    const keel::i32 glScY = keel::as<keel::i32>(viewportH) - scBottom;
     g_gl.Scissor(scX, glScY, scW, scH);
 
     // 4. Bind Shader Program & Standard Uniforms
     g_gl.UseProgram(prog->program);
     if (prog->uViewport >= 0) {
-        g_gl.Uniform2f(prog->uViewport, static_cast<float>(viewportW), static_cast<float>(viewportH));
+        g_gl.Uniform2f(prog->uViewport, keel::as<keel::f32>(viewportW), keel::as<keel::f32>(viewportH));
     }
     if (prog->uPlotRect >= 0) {
         g_gl.Uniform4f(prog->uPlotRect, pass.plotRect.x, pass.plotRect.y, pass.plotRect.w, pass.plotRect.h);
     }
     if (prog->uGridDims >= 0) {
-        g_gl.Uniform2f(prog->uGridDims, static_cast<float>(texW), static_cast<float>(texH));
+        g_gl.Uniform2f(prog->uGridDims, keel::as<keel::f32>(texW), keel::as<keel::f32>(texH));
     }
     if (prog->uBgColor >= 0) {
         g_gl.Uniform3f(prog->uBgColor,
-                       static_cast<float>(pass.bgColor.r) / 255.0f,
-                       static_cast<float>(pass.bgColor.g) / 255.0f,
-                       static_cast<float>(pass.bgColor.b) / 255.0f);
+                       keel::as<keel::f32>(pass.bgColor.r) / 255.0f,
+                       keel::as<keel::f32>(pass.bgColor.g) / 255.0f,
+                       keel::as<keel::f32>(pass.bgColor.b) / 255.0f);
     }
     if (prog->uParams >= 0) {
-        g_gl.Uniform4fv(prog->uParams, static_cast<keel::i32>(pass.params.size()), &pass.params[0].x);
+        g_gl.Uniform4fv(prog->uParams, keel::as<keel::i32>(pass.params.size()), &pass.params[0].x);
     }
     if (prog->uDataTex >= 0) {
         g_gl.Uniform1i(prog->uDataTex, 0);
@@ -683,7 +683,7 @@ void SdlGlShaderEngine::RenderUnderlays(
     g_gl.GetIntegerv(kGL_TEXTURE_BINDING_2D, &prevTex1);
 
     // Set state for GPU underlay shader passes
-    g_gl.Viewport(0, 0, static_cast<keel::i32>(viewportWidth), static_cast<keel::i32>(viewportHeight));
+    g_gl.Viewport(0, 0, keel::as<keel::i32>(viewportWidth), keel::as<keel::i32>(viewportHeight));
     g_gl.Enable(kGL_SCISSOR_TEST);
     g_gl.Disable(kGL_BLEND);
     g_gl.PixelStorei(kGL_UNPACK_ALIGNMENT, 4);
@@ -697,7 +697,7 @@ void SdlGlShaderEngine::RenderUnderlays(
     g_gl.EnableVertexAttribArray(0);
     g_gl.DisableVertexAttribArray(1);
     g_gl.DisableVertexAttribArray(2);
-    g_gl.VertexAttribPointer(0, 2, kGL_FLOAT, kGL_FALSE, 2 * sizeof(float), nullptr);
+    g_gl.VertexAttribPointer(0, 2, kGL_FLOAT, kGL_FALSE, 2 * sizeof(keel::f32), nullptr);
 
     for (const auto& pass : canvas.GetGpuShaderPasses()) {
         RenderPass(pass, viewportWidth, viewportHeight);
@@ -715,14 +715,14 @@ void SdlGlShaderEngine::RenderUnderlays(
             g_gl.DisableVertexAttribArray(i);
         }
     }
-    g_gl.BindBuffer(kGL_ARRAY_BUFFER, static_cast<keel::u32>(prevVbo));
-    g_gl.UseProgram(static_cast<keel::u32>(prevProgram));
+    g_gl.BindBuffer(kGL_ARRAY_BUFFER, keel::as<keel::u32>(prevVbo));
+    g_gl.UseProgram(keel::as<keel::u32>(prevProgram));
 
     g_gl.ActiveTexture(kGL_TEXTURE1);
-    g_gl.BindTexture(kGL_TEXTURE_2D, static_cast<keel::u32>(prevTex1));
+    g_gl.BindTexture(kGL_TEXTURE_2D, keel::as<keel::u32>(prevTex1));
     g_gl.ActiveTexture(kGL_TEXTURE0);
-    g_gl.BindTexture(kGL_TEXTURE_2D, static_cast<keel::u32>(prevTex0));
-    g_gl.ActiveTexture(static_cast<keel::u32>(prevActiveTex));
+    g_gl.BindTexture(kGL_TEXTURE_2D, keel::as<keel::u32>(prevTex0));
+    g_gl.ActiveTexture(keel::as<keel::u32>(prevActiveTex));
 
     g_gl.PixelStorei(kGL_UNPACK_ALIGNMENT, prevUnpackAlign);
 #ifndef __EMSCRIPTEN__

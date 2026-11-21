@@ -23,10 +23,10 @@ public:
 
     // ICanvas implementation
     [[nodiscard]] bool UsesCpuFramebuffer() const noexcept override { return false; }
-    void Begin(keel::u32 width, keel::u32 height, float scale = 1.0f) override;
+    void Begin(keel::u32 width, keel::u32 height, keel::f32 scale = 1.0f) override;
     void End() override;
-    [[nodiscard]] float GetScale() const noexcept override { return m_scale * m_xfScale; }
-    void SetScale(float scale) override;
+    [[nodiscard]] keel::f32 GetScale() const noexcept override { return m_scale * m_xfScale; }
+    void SetScale(keel::f32 scale) override;
     void PushTransform(const Transform2D& transform) override;
     void PopTransform() override;
     [[nodiscard]] keel::StringRef GetBackendName() const noexcept override { return "SDL3 (Direct GPU)"; }
@@ -39,24 +39,24 @@ public:
     void DrawRect(Rect rect, Color fill) override;
     void DrawRoundRect(
         Rect rect,
-        float radius,
+        keel::f32 radius,
         Color fill,
         Color stroke = Color(0, 0, 0, 0),
-        float strokeWidth = 0.0f
+        keel::f32 strokeWidth = 0.0f
     ) override;
 
-    Vec2 MeasureText(keel::StringRef text, float fontSize) override;
-    [[nodiscard]] float GetLineHeight(float fontSize) override;
-    void DrawText(keel::StringRef text, Vec2 pos, float fontSize, Color color) override;
+    Vec2 MeasureText(keel::StringRef text, keel::f32 fontSize) override;
+    [[nodiscard]] keel::f32 GetLineHeight(keel::f32 fontSize) override;
+    void DrawText(keel::StringRef text, Vec2 pos, keel::f32 fontSize, Color color) override;
     void DrawTextBox(
         keel::StringRef text,
         Rect bounds,
-        float fontSize,
+        keel::f32 fontSize,
         Color color,
-        float alignX = 0.0f,
-        float alignY = 0.5f
+        keel::f32 alignX = 0.0f,
+        keel::f32 alignY = 0.5f
     ) override;
-    void DrawLine(Vec2 p1, Vec2 p2, Color color, float strokeWidth = 1.0f) override;
+    void DrawLine(Vec2 p1, Vec2 p2, Color color, keel::f32 strokeWidth = 1.0f) override;
 
     void DrawTexture(
         keel::u64 textureId,
@@ -78,11 +78,11 @@ private:
     SDL_Renderer* m_renderer{nullptr};
     keel::u32 m_width{0};
     keel::u32 m_height{0};
-    float m_scale{1.0f};
-    float m_xfScale{1.0f};
+    keel::f32 m_scale{1.0f};
+    keel::f32 m_xfScale{1.0f};
     Vec2 m_xfOffset{0.0f, 0.0f};
     struct TransformState {
-        float scale;
+        keel::f32 scale;
         Vec2 offset;
     };
     keel::Array<TransformState> m_transformStack;

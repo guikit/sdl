@@ -46,10 +46,10 @@ public:
     ) override;
 
     // ICanvas implementation
-    void Begin(keel::u32 width, keel::u32 height, float scale = 1.0f) override;
+    void Begin(keel::u32 width, keel::u32 height, keel::f32 scale = 1.0f) override;
     void End() override;
-    [[nodiscard]] float GetScale() const noexcept override { return m_scale; }
-    void SetScale(float scale) override { m_scale = (scale > 0.0f) ? scale : 1.0f; }
+    [[nodiscard]] keel::f32 GetScale() const noexcept override { return m_scale; }
+    void SetScale(keel::f32 scale) override { m_scale = (scale > 0.0f) ? scale : 1.0f; }
     void PushTransform(const Transform2D& transform) override;
     void PopTransform() override;
     [[nodiscard]] keel::StringRef GetBackendName() const noexcept override { return "ThorVG (Vector Software)"; }
@@ -61,49 +61,49 @@ public:
     void DrawRect(Rect rect, Color fill) override;
     void DrawRoundRect(
         Rect rect,
-        float radius,
+        keel::f32 radius,
         Color fill,
         Color stroke = Color(0, 0, 0, 0),
-        float strokeWidth = 0.0f
+        keel::f32 strokeWidth = 0.0f
     ) override;
 
-    Vec2 MeasureText(keel::StringRef text, float fontSize) override;
-    Vec2 MeasureTextStyled(keel::StringRef text, float fontSize, FontStyle style) override;
-    [[nodiscard]] float GetLineHeight(float fontSize) override;
-    void DrawText(keel::StringRef text, Vec2 pos, float fontSize, Color color) override;
+    Vec2 MeasureText(keel::StringRef text, keel::f32 fontSize) override;
+    Vec2 MeasureTextStyled(keel::StringRef text, keel::f32 fontSize, FontStyle style) override;
+    [[nodiscard]] keel::f32 GetLineHeight(keel::f32 fontSize) override;
+    void DrawText(keel::StringRef text, Vec2 pos, keel::f32 fontSize, Color color) override;
     void DrawTextStyled(
         keel::StringRef text,
         Vec2 pos,
-        float fontSize,
+        keel::f32 fontSize,
         Color color,
         FontStyle style,
-        float angleDeg = 0.0f
+        keel::f32 angleDeg = 0.0f
     ) override;
     void DrawTextBox(
         keel::StringRef text,
         Rect bounds,
-        float fontSize,
+        keel::f32 fontSize,
         Color color,
-        float alignX = 0.0f,
-        float alignY = 0.5f
+        keel::f32 alignX = 0.0f,
+        keel::f32 alignY = 0.5f
     ) override;
     void DrawTextBoxStyled(
         keel::StringRef text,
         Rect bounds,
-        float fontSize,
+        keel::f32 fontSize,
         Color color,
         FontStyle style,
-        float alignX = 0.0f,
-        float alignY = 0.5f
+        keel::f32 alignX = 0.0f,
+        keel::f32 alignY = 0.5f
     ) override;
-    void DrawLine(Vec2 p1, Vec2 p2, Color color, float strokeWidth = 1.0f) override;
+    void DrawLine(Vec2 p1, Vec2 p2, Color color, keel::f32 strokeWidth = 1.0f) override;
     void DrawTriangle(
         Vec2 p1,
         Vec2 p2,
         Vec2 p3,
         Color fill,
         Color stroke = Color(0, 0, 0, 0),
-        float strokeWidth = 0.0f
+        keel::f32 strokeWidth = 0.0f
     ) override;
     void DrawPath(const VectorPath& path, const PathPaint& paint) override;
 
@@ -111,13 +111,13 @@ public:
     bool DrawImage(
         keel::StringRef source,
         Rect destRect,
-        float cornerRadius = 0.0f,
+        keel::f32 cornerRadius = 0.0f,
         keel::u8 opacity = 255
     ) override;
     bool DrawPixels(
         PixelRef pixels,
         Rect destRect,
-        float cornerRadius = 0.0f,
+        keel::f32 cornerRadius = 0.0f,
         keel::u8 opacity = 255
     ) override;
 
@@ -174,12 +174,12 @@ private:
     void ApplyFont(tvg::Text* txt, FontStyle style) const;
 
     // Logical -> physical pixel mapping: p * m_scale + m_offset (scale and translation only)
-    [[nodiscard]] float PxX(float x) const noexcept { return x * m_scale + m_offset.x; }
-    [[nodiscard]] float PxY(float y) const noexcept { return y * m_scale + m_offset.y; }
+    [[nodiscard]] keel::f32 PxX(keel::f32 x) const noexcept { return x * m_scale + m_offset.x; }
+    [[nodiscard]] keel::f32 PxY(keel::f32 y) const noexcept { return y * m_scale + m_offset.y; }
     [[nodiscard]] Vec2 Px(Vec2 p) const noexcept { return {PxX(p.x), PxY(p.y)}; }
     [[nodiscard]] Rect Px(Rect r) const noexcept { return Rect(PxX(r.x), PxY(r.y), r.w * m_scale, r.h * m_scale); }
-    [[nodiscard]] float FromPxX(float px) const noexcept { return (px - m_offset.x) / m_scale; }
-    [[nodiscard]] float FromPxY(float px) const noexcept { return (px - m_offset.y) / m_scale; }
+    [[nodiscard]] keel::f32 FromPxX(keel::f32 px) const noexcept { return (px - m_offset.x) / m_scale; }
+    [[nodiscard]] keel::f32 FromPxY(keel::f32 px) const noexcept { return (px - m_offset.y) / m_scale; }
     void PunchHole(Rect rect);
     void FlushCanvas();
     void SyncViewportClip();
@@ -196,10 +196,10 @@ private:
     keel::u32 m_width{0};
     keel::u32 m_height{0};
     keel::u32 m_stride{0};
-    float m_scale{1.0f};
+    keel::f32 m_scale{1.0f};
     Vec2 m_offset{0.0f, 0.0f};
     struct TransformState {
-        float scale;
+        keel::f32 scale;
         Vec2 offset;
     };
     keel::Array<TransformState> m_transformStack;
@@ -230,8 +230,8 @@ private:
 
     struct TextMeasureKeyHash {
         keel::u64 operator()(const TextMeasureKey& k) const noexcept {
-            keel::u64 mixed = k.hash ^ (static_cast<keel::u64>(k.fontSizeBits) * 0x9e3779b97f4a7c15ULL);
-            mixed ^= static_cast<keel::u64>(k.style) * 0x517cc1b727220a95ULL;
+            keel::u64 mixed = k.hash ^ (keel::as<keel::u64>(k.fontSizeBits) * 0x9e3779b97f4a7c15ULL);
+            mixed ^= keel::as<keel::u64>(k.style) * 0x517cc1b727220a95ULL;
             return mixed;
         }
     };
@@ -255,10 +255,10 @@ private:
     struct TextMaskKeyHash {
         keel::u64 operator()(const TextMaskKey& k) const noexcept {
             keel::u64 h = k.textHash;
-            h ^= static_cast<keel::u64>(k.fontSizeBits) * 0x9e3779b97f4a7c15ULL;
-            h ^= ((static_cast<keel::u64>(k.textLen) << 16) |
-                  (static_cast<keel::u64>(k.style) << 8) |
-                  static_cast<keel::u64>(k.subpixel)) * 0x94d049bb133111ebULL;
+            h ^= keel::as<keel::u64>(k.fontSizeBits) * 0x9e3779b97f4a7c15ULL;
+            h ^= ((keel::as<keel::u64>(k.textLen) << 16) |
+                  (keel::as<keel::u64>(k.style) << 8) |
+                  keel::as<keel::u64>(k.subpixel)) * 0x94d049bb133111ebULL;
             return h;
         }
     };
@@ -310,10 +310,10 @@ private:
 
     struct ShapeStampKeyHash {
         keel::u64 operator()(const ShapeStampKey& k) const noexcept {
-            keel::u64 h = static_cast<keel::u64>(k.fillRgba) | (static_cast<keel::u64>(k.strokeRgba) << 32);
-            h ^= (static_cast<keel::u64>(k.qW) | (static_cast<keel::u64>(k.qH) << 16) |
-                  (static_cast<keel::u64>(k.qRad) << 32) | (static_cast<keel::u64>(k.qStrokeW) << 48)) * 0x9e3779b97f4a7c15ULL;
-            h ^= static_cast<keel::u64>(k.subpixelPhase) * 0x517cc1b727220a95ULL;
+            keel::u64 h = keel::as<keel::u64>(k.fillRgba) | (keel::as<keel::u64>(k.strokeRgba) << 32);
+            h ^= (keel::as<keel::u64>(k.qW) | (keel::as<keel::u64>(k.qH) << 16) |
+                  (keel::as<keel::u64>(k.qRad) << 32) | (keel::as<keel::u64>(k.qStrokeW) << 48)) * 0x9e3779b97f4a7c15ULL;
+            h ^= keel::as<keel::u64>(k.subpixelPhase) * 0x517cc1b727220a95ULL;
             h ^= h >> 33;
             return h * 0xff51afd7ed558ccdULL;
         }
@@ -374,7 +374,7 @@ private:
                 if (m_nodes.capacity() == 0u) {
                     m_nodes.reserve(MaxEntries);
                 }
-                slot = static_cast<keel::u32>(m_nodes.size());
+                slot = keel::as<keel::u32>(m_nodes.size());
                 m_nodes.push_back(Node{
                     .key = key,
                     .entry = keel::move(entry),
@@ -460,17 +460,17 @@ private:
 
     const TextMaskEntry& ResolveTextMask(
         keel::StringRef text,
-        float scaledFontSize,
+        keel::f32 scaledFontSize,
         FontStyle style,
         bool subpixel
     );
     const ShapeStampEntry& ResolveShapeStamp(
-        float scaledW,
-        float scaledH,
-        float scaledRadius,
+        keel::f32 scaledW,
+        keel::f32 scaledH,
+        keel::f32 scaledRadius,
         Color fill,
         Color stroke,
-        float scaledStrokeWidth,
+        keel::f32 scaledStrokeWidth,
         keel::u8 phaseX = 0u,
         keel::u8 phaseY = 0u
     );
@@ -479,7 +479,7 @@ private:
         keel::i32 dstX,
         keel::i32 dstY,
         Color color,
-        float scaledFontSize,
+        keel::f32 scaledFontSize,
         bool bgrOrder,
         keel::Optional<Rect> extraClip = keel::kNullOpt
     );

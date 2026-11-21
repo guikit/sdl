@@ -17,14 +17,14 @@ namespace guikit {
 /// - Windows (`_WIN32`): Queries per-monitor hardware EDID physical dimensions via `MonitorFromWindow` + GDI `GetDeviceCaps`.
 /// - WebAssembly (`__EMSCRIPTEN__`): Uses `emscripten_get_device_pixel_ratio()` relative to standard 96 CSS DPI.
 /// - Linux / macOS / Fallback: Uses `SDL_GetWindowDisplayScale(window)` relative to 96 DPI.
-[[nodiscard]] float QueryDisplayPixelsPerMm(SDL_Window* window = nullptr) noexcept;
+[[nodiscard]] keel::f32 QueryDisplayPixelsPerMm(SDL_Window* window = nullptr) noexcept;
 
 /// Converts an SDL window-coordinate mouse position to physical framebuffer pixels, the space
 /// `Context::OnMouseMove` expects (it divides by the DPI scale itself to reach logical dp).
 /// `pixelDensity` is `SDL_GetWindowPixelDensity()`: 1 on Windows and Emscripten (window coords are
 /// already pixels), 2 on macOS Retina (window coords are points). Non-positive values are treated as 1.
-[[nodiscard]] inline Vec2 SdlWindowToPhysicalPixels(Vec2 windowPos, float pixelDensity) noexcept {
-    const float pd = (pixelDensity > 0.01f) ? pixelDensity : 1.0f;
+[[nodiscard]] inline Vec2 SdlWindowToPhysicalPixels(Vec2 windowPos, keel::f32 pixelDensity) noexcept {
+    const keel::f32 pd = (pixelDensity > 0.01f) ? pixelDensity : 1.0f;
     return {windowPos.x * pd, windowPos.y * pd};
 }
 
@@ -50,12 +50,12 @@ public:
 
     void PrepareFrameTarget(Context& ui) override;
     void PresentFrame(const Context& ui, FrameMetrics& metrics, bool forcePresent) override;
-    void PaceFrame(double elapsedMs, bool presented) noexcept override;
+    void PaceFrame(keel::f64 elapsedMs, bool presented) noexcept override;
 
     [[nodiscard]] keel::i32 GetWidth() const noexcept override { return m_width; }
     [[nodiscard]] keel::i32 GetHeight() const noexcept override { return m_height; }
-    [[nodiscard]] float GetDpiScale() const noexcept override { return m_dpiScale; }
-    [[nodiscard]] float GetDisplayPixelsPerMm() const noexcept override { return m_displayPxPerMm; }
+    [[nodiscard]] keel::f32 GetDpiScale() const noexcept override { return m_dpiScale; }
+    [[nodiscard]] keel::f32 GetDisplayPixelsPerMm() const noexcept override { return m_displayPxPerMm; }
     [[nodiscard]] bool IsMinimized() const noexcept override { return m_minimized; }
     [[nodiscard]] bool ShouldRenderFrame() const noexcept override { return !m_minimized && !m_skipRenderThisStep; }
     [[nodiscard]] bool IsLiveResizeFrame() const noexcept override { return m_isLiveResizeFrame; }
@@ -78,7 +78,7 @@ public:
 
 private:
     void UpdateDisplayMetrics() noexcept;
-    [[nodiscard]] Vec2 ToPhysicalMousePos(float x, float y) const noexcept {
+    [[nodiscard]] Vec2 ToPhysicalMousePos(keel::f32 x, keel::f32 y) const noexcept {
         return SdlWindowToPhysicalPixels({x, y}, m_windowPixelDensity);
     }
     void ProcessEvent(const SDL_Event& event, Context& ui);
@@ -112,9 +112,9 @@ private:
     bool m_gpuShadersEnabled = false;
     bool m_isLiveResizeFrame = false;
     keel::u32 m_pressedMouseMask = 0;
-    float m_dpiScale = 1.0f;
-    float m_windowPixelDensity = 1.0f;
-    float m_displayPxPerMm = 96.0f / 25.4f;
+    keel::f32 m_dpiScale = 1.0f;
+    keel::f32 m_windowPixelDensity = 1.0f;
+    keel::f32 m_displayPxPerMm = 96.0f / 25.4f;
 
     keel::u64 m_lastLiveResizeTimeNs{0};
     keel::u64 m_lastEmscriptenRenderTimeNs{0};

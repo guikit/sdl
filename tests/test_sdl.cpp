@@ -85,7 +85,7 @@ void TestThorCanvasTextAndAssets() {
         keel::i32 minX = 200;
         for (keel::i32 y = 0; y < 40; ++y) {
             for (keel::i32 x = 0; x < 200; ++x) {
-                if (px[static_cast<keel::usize>(y) * 200u + static_cast<keel::usize>(x)] != 0u && x < minX) {
+                if (px[keel::as<keel::usize>(y) * 200u + keel::as<keel::usize>(x)] != 0u && x < minX) {
                     minX = x;
                 }
             }
@@ -104,23 +104,23 @@ void TestThorCanvasFontSizeAndStyles() {
     if (!font.has_value() || font->Empty()) return;
 
     const keel::u8* d = font->data;
-    auto be16 = [&](keel::usize off) { return static_cast<keel::u16>((d[off] << 8) | d[off + 1]); };
+    auto be16 = [&](keel::usize off) { return keel::as<keel::u16>((d[off] << 8) | d[off + 1]); };
     auto be32 = [&](keel::usize off) {
-        return (static_cast<keel::u32>(d[off]) << 24) | (static_cast<keel::u32>(d[off + 1]) << 16) |
-               (static_cast<keel::u32>(d[off + 2]) << 8) | static_cast<keel::u32>(d[off + 3]);
+        return (keel::as<keel::u32>(d[off]) << 24) | (keel::as<keel::u32>(d[off + 1]) << 16) |
+               (keel::as<keel::u32>(d[off + 2]) << 8) | keel::as<keel::u32>(d[off + 3]);
     };
     keel::usize headOff = 0, hheaOff = 0;
     const keel::u16 numTables = be16(4);
     for (keel::u16 i = 0; i < numTables; ++i) {
-        const keel::usize rec = 12 + static_cast<keel::usize>(i) * 16;
+        const keel::usize rec = 12 + keel::as<keel::usize>(i) * 16;
         if (std::memcmp(d + rec, "head", 4) == 0) headOff = be32(rec + 8);
         if (std::memcmp(d + rec, "hhea", 4) == 0) hheaOff = be32(rec + 8);
     }
     CHECK(headOff != 0 && hheaOff != 0);
-    const float unitsPerEm = static_cast<float>(be16(headOff + 18));
-    const float ascender = static_cast<float>(static_cast<keel::i16>(be16(hheaOff + 4)));
-    const float descender = static_cast<float>(static_cast<keel::i16>(be16(hheaOff + 6)));
-    const float emBoxRatio = (ascender - descender) / unitsPerEm;
+    const keel::f32 unitsPerEm = keel::as<keel::f32>(be16(headOff + 18));
+    const keel::f32 ascender = keel::as<keel::f32>(keel::as<keel::i16>(be16(hheaOff + 4)));
+    const keel::f32 descender = keel::as<keel::f32>(keel::as<keel::i16>(be16(hheaOff + 6)));
+    const keel::f32 emBoxRatio = (ascender - descender) / unitsPerEm;
 
     ThorCanvas canvas(false);
     CHECK(canvas.LoadFontMemory("RobotoTest", font->Bytes(), FontStyle::Regular));
@@ -144,9 +144,9 @@ void TestThorCanvasTransformAndSubpixel() {
 
     constexpr keel::u32 kW = 260;
     constexpr keel::u32 kH = 180;
-    constexpr float kFrameScale = 1.5f;
+    constexpr keel::f32 kFrameScale = 1.5f;
     const Vec2 origin{10.0f, 10.0f};
-    constexpr float s = 2.0f;
+    constexpr keel::f32 s = 2.0f;
     auto map = [&](Vec2 v) { return Vec2{origin.x + (v.x - origin.x) * s, origin.y + (v.y - origin.y) * s}; };
     auto mapRect = [&](Rect r) {
         const Vec2 o = map({r.x, r.y});
@@ -156,7 +156,7 @@ void TestThorCanvasTransformAndSubpixel() {
     auto draw = [&](ThorCanvas& c, bool useTransform) {
         auto R = [&](Rect r) { return useTransform ? r : mapRect(r); };
         auto P = [&](Vec2 v) { return useTransform ? v : map(v); };
-        auto L = [&](float v) { return useTransform ? v : v * s; };
+        auto L = [&](keel::f32 v) { return useTransform ? v : v * s; };
         c.Begin(kW, kH, kFrameScale);
         c.Clear(Color(10, 12, 16));
         if (useTransform) {
@@ -188,8 +188,8 @@ void TestThorCanvasTransformAndSubpixel() {
         if (a[i] == b[i]) continue;
         ++differing;
         for (keel::i32 shift = 0; shift < 32; shift += 8) {
-            const keel::i32 ca8 = static_cast<keel::i32>((a[i] >> shift) & 0xFFu);
-            const keel::i32 cb8 = static_cast<keel::i32>((b[i] >> shift) & 0xFFu);
+            const keel::i32 ca8 = keel::as<keel::i32>((a[i] >> shift) & 0xFFu);
+            const keel::i32 cb8 = keel::as<keel::i32>((b[i] >> shift) & 0xFFu);
             maxDelta = keel::max(maxDelta, keel::abs(ca8 - cb8));
         }
     }
@@ -253,7 +253,7 @@ void TestThorCanvasStampLruAndOverlayZOrder() {
             char buf[64]{};
             const keel::StringRef label = keel::format_buf(buf, "Telemetry Sample #%04d", i);
             canvas.DrawTextBoxStyled(label, Rect(8.0f, 8.0f, 360.0f, 28.0f), 14.0f, Color(235, 240, 248, 255), FontStyle::Regular, 0.0f, 0.5f);
-            canvas.DrawRoundRect(Rect(8.0f, 48.0f, 24.0f + static_cast<float>(i % 140), 24.0f), 6.0f, Color(56, 189, 248, 220));
+            canvas.DrawRoundRect(Rect(8.0f, 48.0f, 24.0f + keel::as<keel::f32>(i % 140), 24.0f), 6.0f, Color(56, 189, 248, 220));
         }
         canvas.End();
         keel::usize nonBg = 0;
@@ -271,7 +271,7 @@ void TestThorCanvasStampLruAndOverlayZOrder() {
         canvas.SetTarget(pixels.data(), W, H, W);
         Context ui;
         ui.SetThemeMode(ThemeMode::Light);
-        ui.BeginFrame({static_cast<float>(W), static_cast<float>(H)});
+        ui.BeginFrame({keel::as<keel::f32>(W), keel::as<keel::f32>(H)});
         ui.RegisterOverlay([](ICanvas& c) {
             c.DrawRect(Rect{100.0f, 100.0f, 120.0f, 40.0f}, Color{20, 200, 60, 255});
         }, OverlayLayer::Notification);
@@ -306,8 +306,8 @@ void TestSdlBackendAndDpiMapping() {
 
     // 2. SdlWindowToPhysicalPixels HiDPI mapping
     struct Case {
-        float pixelDensity;
-        float dpiScale;
+        keel::f32 pixelDensity;
+        keel::f32 dpiScale;
         Vec2 windowPos;
         Vec2 expectedLogical;
     };

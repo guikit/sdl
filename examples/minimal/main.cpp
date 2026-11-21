@@ -2,7 +2,7 @@
 
 int main(int /*argc*/, char* /*argv*/[]) {
     bool autopilot = true;
-    float thrustPct = 72.5f;
+    keel::f32 thrustPct = 72.5f;
     keel::i32 pulseCount = 0;
 
     guikit::MainWindow app({
