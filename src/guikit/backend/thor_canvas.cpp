@@ -685,9 +685,18 @@ Vec2 ThorCanvas::MeasureTextStyled(keel::StringRef text, keel::f32 fontSize, Fon
     for (char c : text) {
         h = (h ^ keel::as<keel::u8>(c)) * 1099511628211ULL;
     }
+    const keel::f32 scale = (m_scale > 0.01f) ? m_scale : 1.0f;
+    const keel::f32 scaledFs = fontSize * scale;
+    const keel::u32 scaleQ = keel::as<keel::u32>(keel::round_i32(scale * 1000.0f));
+    h = (h ^ keel::as<keel::u64>(scaleQ)) * 1099511628211ULL;
     keel::u32 fsBits = 0;
-    std::memcpy(&fsBits, &fontSize, sizeof(keel::f32));
-    const TextMeasureKey key{h, fsBits, keel::as<keel::u8>(style)};
+    std::memcpy(&fsBits, &scaledFs, sizeof(keel::f32));
+    const FontHinting effHint = TextCompositor::ResolveEffectiveHinting(m_textSettings.hinting, scale);
+    const TextMeasureKey key{
+        h,
+        fsBits,
+        keel::as<keel::u8>(keel::as<keel::u8>(style) | (keel::as<keel::u8>(effHint) << 4))
+    };
 
     if (const Vec2* cached = m_textMeasureCache.get(key)) {
         return *cached;
@@ -695,7 +704,8 @@ Vec2 ThorCanvas::MeasureTextStyled(keel::StringRef text, keel::f32 fontSize, Fon
 
 #if GUIKIT_HAS_TEXT_RASTERIZER
     if (m_ftEngine && m_ftEngine->HasFontForStyle(style)) {
-        const Vec2 result = m_ftEngine->MeasureText(text, fontSize, style, m_textSettings.hinting);
+        const Vec2 px = m_ftEngine->MeasureText(text, scaledFs, style, effHint);
+        const Vec2 result{px.x / scale, px.y / scale};
         m_textMeasureCache.put(key, result);
         return result;
     }
