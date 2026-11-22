@@ -897,6 +897,13 @@ void SdlWindowBackend::OpenUrl(keel::StringRef url) const noexcept {
     SDL_OpenURL(urlStr.c_str());
 }
 
+keel::Optional<ThemeMode> SdlWindowBackend::QuerySystemTheme() const noexcept {
+    const SDL_SystemTheme sysTheme = SDL_GetSystemTheme();
+    if (sysTheme == SDL_SYSTEM_THEME_DARK) return ThemeMode::Dark;
+    if (sysTheme == SDL_SYSTEM_THEME_LIGHT) return ThemeMode::Light;
+    return keel::kNullOpt;
+}
+
 namespace {
 struct SdlBackendModuleRegistrar {
     SdlBackendModuleRegistrar() noexcept { RegisterSdlWindowBackend(); }
