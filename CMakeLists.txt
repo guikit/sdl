@@ -94,7 +94,7 @@ if (GUIKIT_BUILD_BACKEND_THORVG)
     if (GUIKIT_SDL_HAS_TEXT AND TARGET guikit::text)
         target_link_libraries(guikit_backend_thorvg PUBLIC guikit::text)
     else()
-        target_compile_definitions(guikit_backend_thorvg PUBLIC GUIKIT_HAS_FREETYPE=0)
+        target_compile_definitions(guikit_backend_thorvg PUBLIC GUIKIT_HAS_TEXT_ENGINE=0 GUIKIT_HAS_FREETYPE=0)
     endif()
     if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/thorvg/src/loaders/png/tvgLodePng.h")
         target_include_directories(guikit_backend_thorvg SYSTEM PRIVATE

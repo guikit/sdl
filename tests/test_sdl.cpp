@@ -201,6 +201,9 @@ void TestThorCanvasTransformAndSubpixel() {
 #if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
     CHECK(subCanvas.GetTextEngineName() == "FreeType");
     CHECK(subCanvas.SupportsFontHinting());
+#elif defined(GUIKIT_HAS_TEXT_ENGINE) && GUIKIT_HAS_TEXT_ENGINE
+    CHECK(subCanvas.GetTextEngineName() == "keel::font");
+    CHECK(subCanvas.SupportsFontHinting());
 #else
     CHECK(subCanvas.GetTextEngineName() == "ThorVG");
     CHECK(!subCanvas.SupportsFontHinting());

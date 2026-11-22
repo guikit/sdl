@@ -1,8 +1,11 @@
 #include "guikit/backend/thor_canvas.hpp"
 #include "guikit/backend/text_compositor.hpp"
 #include "guikit/backend/vector_backend.hpp"
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
-#include "guikit/backend/freetype_text_engine.hpp"
+#if (defined(GUIKIT_HAS_TEXT_ENGINE) && GUIKIT_HAS_TEXT_ENGINE) || (defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE)
+#define GUIKIT_HAS_TEXT_RASTERIZER 1
+#include "guikit/backend/text_engine.hpp"
+#else
+#define GUIKIT_HAS_TEXT_RASTERIZER 0
 #endif
 #include <cstdlib>
 #include <cstring>
@@ -128,8 +131,8 @@ ThorCanvas::ThorCanvas(bool loadDefaultFonts) {
     // multi-core mutex contention and condition_variable wakeups on UI primitives.
     tvg::Initializer::init(0);
     m_canvas = tvg::SwCanvas::gen(tvg::EngineOption::None);
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
-    m_ftEngine = new FreeTypeTextEngine();
+#if GUIKIT_HAS_TEXT_RASTERIZER
+    m_ftEngine = new TextEngine();
     if (!m_ftEngine->IsAvailable()) {
         delete m_ftEngine;
         m_ftEngine = nullptr;
@@ -173,7 +176,7 @@ ThorCanvas::ThorCanvas(bool loadDefaultFonts) {
 }
 
 ThorCanvas::~ThorCanvas() {
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
+#if GUIKIT_HAS_TEXT_RASTERIZER
     delete m_ftEngine;
     m_ftEngine = nullptr;
 #endif
@@ -214,7 +217,7 @@ void ThorCanvas::TrimCaches() noexcept {
     m_stampScratch = {};
     m_subpixelRowScratch = {};
     m_filteredMaskScratch = {};
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
+#if GUIKIT_HAS_TEXT_RASTERIZER
     if (m_ftEngine) {
         m_ftEngine->TrimCaches();
     }
@@ -222,16 +225,20 @@ void ThorCanvas::TrimCaches() noexcept {
 }
 
 keel::StringRef ThorCanvas::GetTextEngineName() const noexcept {
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
+#if GUIKIT_HAS_TEXT_RASTERIZER
     if (m_ftEngine && m_ftEngine->IsAvailable()) {
+#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
         return "FreeType";
+#else
+        return "keel::font";
+#endif
     }
 #endif
     return "ThorVG";
 }
 
 bool ThorCanvas::SupportsFontHinting() const noexcept {
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
+#if GUIKIT_HAS_TEXT_RASTERIZER
     return m_ftEngine && m_ftEngine->IsAvailable();
 #else
     return false;
@@ -298,7 +305,7 @@ bool ThorCanvas::LoadFontMemoryInternal(
     FontSlot& slot = m_fonts[FontStyleSlotIndex(style)];
     slot.name.assign(name);
     slot.loaded = true;
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
+#if GUIKIT_HAS_TEXT_RASTERIZER
     if (m_ftEngine && m_ftEngine->IsAvailable()) {
         (void)m_ftEngine->LoadFontMemory(data, style, copyData);
     }
@@ -686,7 +693,7 @@ Vec2 ThorCanvas::MeasureTextStyled(keel::StringRef text, keel::f32 fontSize, Fon
         return *cached;
     }
 
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
+#if GUIKIT_HAS_TEXT_RASTERIZER
     if (m_ftEngine && m_ftEngine->HasFontForStyle(style)) {
         const Vec2 result = m_ftEngine->MeasureText(text, fontSize, style, m_textSettings.hinting);
         m_textMeasureCache.put(key, result);
@@ -1215,7 +1222,7 @@ void ThorCanvas::DrawTextStyled(
             return;
         }
         const keel::f32 scaledFs = fontSize * m_scale;
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
+#if GUIKIT_HAS_TEXT_RASTERIZER
         if (m_ftEngine && m_ftEngine->HasFontForStyle(style)) {
             Rect clipPx(0.0f, 0.0f, keel::as<keel::f32>(m_width), keel::as<keel::f32>(m_height));
             if (!m_clipStack.empty()) {
@@ -1318,7 +1325,7 @@ void ThorCanvas::DrawTextBoxStyled(
         drawText.find('\n') == keel::StringRef::npos) {
         const keel::StringRef stampText = ClampUtf8Prefix(drawText, 512);
         const keel::f32 scaledFs = fontSize * m_scale;
-#if defined(GUIKIT_HAS_FREETYPE) && GUIKIT_HAS_FREETYPE
+#if GUIKIT_HAS_TEXT_RASTERIZER
         if (m_ftEngine && m_ftEngine->HasFontForStyle(style)) {
             const keel::f32 vPad = keel::max(4.0f, scaledFs * 0.35f);
             Rect clipPx(0.0f, 0.0f, keel::as<keel::f32>(m_width), keel::as<keel::f32>(m_height));
