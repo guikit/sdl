@@ -901,7 +901,7 @@ keel::Optional<ThemeMode> SdlWindowBackend::QuerySystemTheme() const noexcept {
     const SDL_SystemTheme sysTheme = SDL_GetSystemTheme();
     if (sysTheme == SDL_SYSTEM_THEME_DARK) return ThemeMode::Dark;
     if (sysTheme == SDL_SYSTEM_THEME_LIGHT) return ThemeMode::Light;
-    return keel::kNullOpt;
+    return QueryOsSystemTheme();
 }
 
 namespace {
