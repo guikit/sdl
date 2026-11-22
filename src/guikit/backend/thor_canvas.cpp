@@ -16,6 +16,7 @@
 #include "keel/bits.h"
 #include "keel/fs.h"
 #include "keel/math.h"
+#include "keel/sync.h"
 #include "keel/utf8.h"
 #include "thorvg.h"
 #if __has_include("tvgLodePng.h")
@@ -124,13 +125,22 @@ struct ScopedCStr {
     return (a << 24) | (b << 16) | (g << 8) | r;
 }
 
+keel::Mutex& GetThorVgLifecycleMutex() noexcept {
+    static keel::Mutex s_mtx;
+    return s_mtx;
+}
+
 } // namespace
 
 ThorCanvas::ThorCanvas(bool loadDefaultFonts) {
     // Use 0 worker threads (synchronous main-thread rasterization) to eliminate
     // multi-core mutex contention and condition_variable wakeups on UI primitives.
-    tvg::Initializer::init(0);
-    m_canvas = tvg::SwCanvas::gen(tvg::EngineOption::None);
+    // Serialize tvg::Initializer::init/term (non-atomic engineInit counter in ThorVG).
+    {
+        keel::LockGuard<keel::Mutex> lk(GetThorVgLifecycleMutex());
+        tvg::Initializer::init(0);
+        m_canvas = tvg::SwCanvas::gen(tvg::EngineOption::None);
+    }
 #if GUIKIT_HAS_TEXT_RASTERIZER
     m_ftEngine = new TextEngine();
     if (!m_ftEngine->IsAvailable()) {
@@ -180,21 +190,24 @@ ThorCanvas::~ThorCanvas() {
     delete m_ftEngine;
     m_ftEngine = nullptr;
 #endif
-    if (m_measureText) {
-        m_measureText->unref();
-        m_measureText = nullptr;
+    {
+        keel::LockGuard<keel::Mutex> lk(GetThorVgLifecycleMutex());
+        if (m_measureText) {
+            m_measureText->unref();
+            m_measureText = nullptr;
+        }
+        if (m_stampCanvas) {
+            m_stampCanvas->sync();
+            delete m_stampCanvas;
+            m_stampCanvas = nullptr;
+        }
+        if (m_canvas) {
+            m_canvas->sync();
+            delete m_canvas;
+            m_canvas = nullptr;
+        }
+        tvg::Initializer::term();
     }
-    if (m_stampCanvas) {
-        m_stampCanvas->sync();
-        delete m_stampCanvas;
-        m_stampCanvas = nullptr;
-    }
-    if (m_canvas) {
-        m_canvas->sync();
-        delete m_canvas;
-        m_canvas = nullptr;
-    }
-    tvg::Initializer::term();
 }
 
 void ThorCanvas::FlushCanvas() {
@@ -2299,8 +2312,14 @@ bool DecodeThorImageFromMemory(
 
     // Generic ThorVG public API fallback (supports PNG, JPEG, WebP, SVG)
     struct TvgInitScope {
-        TvgInitScope() noexcept { tvg::Initializer::init(0); }
-        ~TvgInitScope() noexcept { tvg::Initializer::term(); }
+        TvgInitScope() noexcept {
+            keel::LockGuard<keel::Mutex> lk(GetThorVgLifecycleMutex());
+            tvg::Initializer::init(0);
+        }
+        ~TvgInitScope() noexcept {
+            keel::LockGuard<keel::Mutex> lk(GetThorVgLifecycleMutex());
+            tvg::Initializer::term();
+        }
     } initScope;
 
     auto* pic = tvg::Picture::gen();
