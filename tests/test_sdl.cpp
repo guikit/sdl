@@ -351,6 +351,67 @@ void TestSdlBackendAndDpiMapping() {
 #endif
 }
 
+#if defined(GUIKIT_HAS_BACKEND_THORVG) && GUIKIT_HAS_BACKEND_THORVG
+void TestThorCanvasDrawListPixelParity() {
+    keel::println("  -> TestThorCanvasDrawListPixelParity...");
+    using namespace guikit;
+
+    constexpr keel::u32 kW = 480;
+    constexpr keel::u32 kH = 320;
+    keel::Array<keel::u32> directPixels(kW * kH, 0u);
+    keel::Array<keel::u32> drawListPixels(kW * kH, 0u);
+
+    auto renderScene = [&](bool useDrawList, keel::Array<keel::u32>& outPixels, keel::usize& outCmdCount) {
+        ThorCanvas canvas(true);
+        CHECK(canvas.QueryCpuSurface() != nullptr);
+        CHECK(canvas.QueryGpuPassRenderer() != nullptr);
+        canvas.SetTarget(outPixels.data(), kW, kH, kW);
+
+        Context ui;
+        ui.SetDrawListEnabled(useDrawList);
+        ui.SetTheme(UiTheme::Dark());
+        ui.SetClearColor(Color(15, 23, 42, 255));
+        ui.InvalidateAll();
+
+        bool toggleOn = true;
+        keel::f32 sliderVal = 0.65f;
+        ui.BeginFrame({keel::as<keel::f32>(kW), keel::as<keel::f32>(kH)}, 1.0f);
+        if (auto col = guikit::Column(ui, {.gap = 10.0f, .padding = Padding::All(16.0f)})) {
+            if (auto card = guikit::Card(ui, {.gap = 8.0f, .padding = Padding::All(14.0f)})) {
+                guikit::Heading(ui, {.label = "DrawList Regression", .level = HeadingLevel::H4});
+                if (auto row = guikit::Row(ui, {.gap = 8.0f})) {
+                    (void)guikit::Button(ui, {.text = "Primary", .color = StateColor::Primary()});
+                    (void)guikit::Switch(ui, toggleOn);
+                    guikit::Tag(ui, "OK", {.variant = UiVariant::Success});
+                }
+                (void)guikit::Slider(ui, sliderVal, 0.0f, 1.0f);
+                guikit::ProgressBar(ui, 0.72f);
+            }
+        }
+        ui.EndFrame(canvas);
+        outCmdCount = ui.GetLastDrawList().CommandCount();
+    };
+
+    keel::usize directCmds = 0u;
+    keel::usize listCmds = 0u;
+    renderScene(false, directPixels, directCmds);
+    renderScene(true, drawListPixels, listCmds);
+
+    CHECK(directCmds == 0u);
+    CHECK(listCmds > 15u);
+
+    keel::usize nonBgCount = 0u;
+    const keel::u32 bgPx = drawListPixels[0];
+    for (keel::usize i = 0u; i < directPixels.size(); ++i) {
+        if (drawListPixels[i] != bgPx) {
+            ++nonBgCount;
+        }
+    }
+    CHECK(nonBgCount > 5000u);
+    CHECK(keel::mem_cmp(directPixels.data(), drawListPixels.data(), directPixels.size() * sizeof(keel::u32)) == 0);
+}
+#endif
+
 #endif // GUIKIT_HAS_BACKEND_SDL3
 
 int main() {
@@ -360,6 +421,7 @@ int main() {
     TestThorCanvasFontSizeAndStyles();
     TestThorCanvasTransformAndSubpixel();
     TestThorCanvasStampLruAndOverlayZOrder();
+    TestThorCanvasDrawListPixelParity();
 #endif
 #if defined(GUIKIT_HAS_BACKEND_SDL3) && GUIKIT_HAS_BACKEND_SDL3
     TestSdlBackendAndDpiMapping();

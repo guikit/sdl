@@ -22,7 +22,6 @@ public:
     [[nodiscard]] SDL_Renderer* GetRenderer() const noexcept { return m_renderer; }
 
     // ICanvas implementation
-    [[nodiscard]] bool UsesCpuFramebuffer() const noexcept override { return false; }
     void Begin(keel::u32 width, keel::u32 height, keel::f32 scale = 1.0f) override;
     void End() override;
     [[nodiscard]] keel::f32 GetScale() const noexcept override { return m_scale * m_xfScale; }

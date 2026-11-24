@@ -19,13 +19,18 @@ namespace guikit {
 class TextEngine;
 
 /// ThorVG-based vector graphics canvas implementation.
-class ThorCanvas : public ICanvas {
+class ThorCanvas : public ICanvas, public ICpuSurfaceCanvas, public IGpuPassRenderer {
 public:
     explicit ThorCanvas(bool loadDefaultFonts = true);
     ~ThorCanvas() override;
 
     ThorCanvas(const ThorCanvas&) = delete;
     ThorCanvas& operator=(const ThorCanvas&) = delete;
+
+    [[nodiscard]] ICpuSurfaceCanvas* QueryCpuSurface() noexcept override { return this; }
+    [[nodiscard]] const ICpuSurfaceCanvas* QueryCpuSurface() const noexcept override { return this; }
+    [[nodiscard]] IGpuPassRenderer* QueryGpuPassRenderer() noexcept override { return this; }
+    [[nodiscard]] const IGpuPassRenderer* QueryGpuPassRenderer() const noexcept override { return this; }
 
     [[nodiscard]] SurfacePixelFormat GetPixelFormat() const noexcept override {
         return SurfacePixelFormat::ABGR8888_Premul;
