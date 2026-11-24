@@ -328,21 +328,26 @@ void TestSdlBackendAndDpiMapping() {
         CHECK_NEAR(ui.GetMousePos().y, c.expectedLogical.y, 0.01f);
     }
 
-    // 3. SdlWindowBackend ICanvas dependency injection & fallback
-    SdlWindowBackend customWinBackend(keel::make_unique<SdlCanvas>(nullptr));
-    CHECK(!customWinBackend.GetCanvas().UsesCpuFramebuffer());
-    CHECK(customWinBackend.GetCanvas().GetBackendName() == "SDL3 (Direct GPU)");
+    // 3. SdlPlatformWindow default canvas selection & fallback
+    SdlPlatformWindow sdlWin;
+    CHECK(sdlWin.GetPlatformName() == "SDL3");
 
     RegisterDefaultVectorCanvasFactory(nullptr);
     CHECK(!HasDefaultVectorCanvasFactory());
     {
-        SdlWindowBackend fallbackWinBackend;
-        CHECK(!fallbackWinBackend.GetCanvas().UsesCpuFramebuffer());
-        CHECK(fallbackWinBackend.GetCanvas().GetBackendName() == "SDL3 (Direct GPU)");
+        auto fallbackCanvas = sdlWin.CreateDefaultCanvas();
+        CHECK(fallbackCanvas != nullptr);
+        CHECK(!fallbackCanvas->UsesCpuFramebuffer());
+        CHECK(fallbackCanvas->GetBackendName() == "SDL3 (Direct GPU)");
     }
 #if defined(GUIKIT_HAS_BACKEND_THORVG) && GUIKIT_HAS_BACKEND_THORVG
     RegisterThorVectorBackend();
     CHECK(HasDefaultVectorCanvasFactory());
+    {
+        auto vecCanvas = sdlWin.CreateDefaultCanvas();
+        CHECK(vecCanvas != nullptr);
+        CHECK(vecCanvas->UsesCpuFramebuffer());
+    }
 #endif
 }
 

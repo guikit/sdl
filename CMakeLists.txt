@@ -123,7 +123,7 @@ if (GUIKIT_BUILD_BACKEND_SDL3)
     endif()
 
     add_library(guikit_backend_sdl3 STATIC
-        src/guikit/backend/sdl_window_backend.cpp
+        src/guikit/backend/sdl_platform_window.cpp
         src/guikit/backend/sdl_canvas.cpp
         src/guikit/backend/sdl_gl_shader_engine.cpp
     )

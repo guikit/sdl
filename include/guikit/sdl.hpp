@@ -11,7 +11,7 @@
 #if defined(GUIKIT_HAS_BACKEND_SDL3) && GUIKIT_HAS_BACKEND_SDL3
 #include "guikit/backend/sdl_canvas.hpp"
 #include "guikit/backend/sdl_gl_shader_engine.hpp"
-#include "guikit/backend/sdl_window_backend.hpp"
+#include "guikit/backend/sdl_platform_window.hpp"
 #endif
 
 namespace guikit {
@@ -20,7 +20,7 @@ namespace guikit {
 void RegisterThorVectorBackend() noexcept;
 #endif
 #if defined(GUIKIT_HAS_BACKEND_SDL3) && GUIKIT_HAS_BACKEND_SDL3
-void RegisterSdlWindowBackend() noexcept;
+void RegisterSdlPlatformWindow() noexcept;
 #endif
 
 #if (defined(GUIKIT_HAS_BACKEND_THORVG) && GUIKIT_HAS_BACKEND_THORVG) || \
@@ -32,7 +32,7 @@ struct SdlBackendsAutoRegistrar {
         RegisterThorVectorBackend();
 #endif
 #if defined(GUIKIT_HAS_BACKEND_SDL3) && GUIKIT_HAS_BACKEND_SDL3
-        RegisterSdlWindowBackend();
+        RegisterSdlPlatformWindow();
 #endif
     }
 };

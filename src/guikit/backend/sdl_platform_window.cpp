@@ -1,4 +1,4 @@
-#include "guikit/backend/sdl_window_backend.hpp"
+#include "guikit/backend/sdl_platform_window.hpp"
 #include "guikit/backend/sdl_canvas.hpp"
 #include "guikit/context.hpp"
 #include <SDL3/SDL.h>
@@ -54,7 +54,7 @@ namespace {
 
 #ifndef __EMSCRIPTEN__
 bool SDLCALL LiveResizeEventWatchThunk(void* userdata, SDL_Event* event) {
-    return SdlWindowBackend::LiveResizeEventWatch(userdata, event);
+    return SdlPlatformWindow::LiveResizeEventWatch(userdata, event);
 }
 #endif
 
@@ -96,6 +96,16 @@ bool GetEmscriptenCanvasPhysicalSize(keel::i32& outW, keel::i32& outH, bool high
     return false;
 }
 #endif
+
+[[nodiscard]] SDL_PixelFormat ResolveSdlPixelFormat(SurfacePixelFormat fmt) noexcept {
+    switch (fmt) {
+        case SurfacePixelFormat::ARGB8888_Premul:
+            return SDL_PIXELFORMAT_ARGB8888;
+        case SurfacePixelFormat::ABGR8888_Premul:
+        default:
+            return SDL_PIXELFORMAT_ABGR8888;
+    }
+}
 
 } // namespace
 
@@ -141,54 +151,28 @@ keel::f32 QueryDisplayPixelsPerMm(SDL_Window* window) noexcept {
     return (96.0f * safeScale) / 25.4f;
 }
 
-keel::UniquePtr<IWindowBackend> CreateSdlWindowBackend() {
-    return keel::make_unique<SdlWindowBackend>();
+keel::UniquePtr<IPlatformWindow> CreateSdlPlatformWindow() {
+    return keel::make_unique<SdlPlatformWindow>();
 }
 
-keel::UniquePtr<IWindowBackend> CreateSdlWindowBackend(keel::UniquePtr<ICanvas> canvas) {
-    return keel::make_unique<SdlWindowBackend>(keel::move(canvas));
+void RegisterSdlPlatformWindow() noexcept {
+    RegisterDefaultPlatform(PlatformRegistration{
+        .createWindow = &CreateSdlPlatformWindow,
+        .createCanvas = nullptr,
+        .graphicsApi = GraphicsApi::None
+    });
 }
 
-void RegisterSdlWindowBackend() noexcept {
-    RegisterDefaultWindowBackendFactory(&CreateSdlWindowBackend);
+SdlPlatformWindow::~SdlPlatformWindow() {
+    Destroy();
 }
 
-namespace {
-
-[[nodiscard]] SDL_PixelFormat ResolveSdlPixelFormat(SurfacePixelFormat fmt) noexcept {
-    switch (fmt) {
-        case SurfacePixelFormat::ARGB8888_Premul:
-            return SDL_PIXELFORMAT_ARGB8888;
-        case SurfacePixelFormat::ABGR8888_Premul:
-        default:
-            return SDL_PIXELFORMAT_ABGR8888;
-    }
-}
-
-} // namespace
-
-SdlWindowBackend::SdlWindowBackend(keel::UniquePtr<ICanvas> canvas)
-    : m_canvas(keel::move(canvas))
-    , m_hasExplicitCanvas(m_canvas != nullptr) {
-    if (!m_canvas) {
-        m_canvas = CreateVectorCanvas();
-        if (!m_canvas) {
-            m_canvas = keel::make_unique<SdlCanvas>(nullptr);
-            m_usingFallbackCanvas = true;
-        }
-    }
-}
-
-SdlWindowBackend::~SdlWindowBackend() {
-    Shutdown();
-}
-
-void SdlWindowBackend::UpdateDisplayMetrics() noexcept {
+void SdlPlatformWindow::UpdateDisplayMetrics() noexcept {
     m_displayPxPerMm = QueryDisplayPixelsPerMm(m_window);
     const keel::f32 rawPixelDensity = (m_window != nullptr) ? SDL_GetWindowPixelDensity(m_window) : 1.0f;
     const keel::f32 pixelDensity = (rawPixelDensity > 0.01f) ? rawPixelDensity : 1.0f;
 
-    if (m_config.highDpi) {
+    if (m_desc.highDpi) {
 #ifdef __EMSCRIPTEN__
         const keel::f64 dpr = emscripten_get_device_pixel_ratio();
         m_dpiScale = (dpr > 0.1) ? keel::as<keel::f32>(dpr) : 1.0f;
@@ -202,27 +186,25 @@ void SdlWindowBackend::UpdateDisplayMetrics() noexcept {
     m_windowPixelDensity = pixelDensity;
 }
 
-bool SdlWindowBackend::Initialize(
-    const MainWindowConfig& config,
+bool SdlPlatformWindow::Create(
+    const PlatformWindowDesc& desc,
     Context& ui,
     WindowHostCallbacks callbacks
 ) {
-    Shutdown();
+    Destroy();
 
-    m_config = config;
+    m_desc = desc;
     m_callbacks = keel::move(callbacks);
     m_boundUi = &ui;
-    m_width = keel::max(1, config.width);
-    m_height = keel::max(1, config.height);
-    m_vsyncEnabled = config.vsync;
+    m_attachedCanvas = nullptr;
+    m_width = keel::max(1, desc.width);
+    m_height = keel::max(1, desc.height);
+    m_vsyncEnabled = desc.vsync;
     m_shouldExit = false;
     m_minimized = false;
     (void)AtomicExchangeU32(m_wakePending, 0u);
 
 #if defined(__linux__) && !defined(__ANDROID__)
-    // Prefer X11/XWayland by default on Linux desktop so windows always receive native
-    // titlebars, resize borders, and window positioning even on GNOME Wayland without libdecor.
-    // Users can still override this via the SDL_VIDEO_DRIVER=wayland environment variable.
     SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "x11,wayland", SDL_HINT_DEFAULT);
 #endif
 
@@ -233,41 +215,41 @@ bool SdlWindowBackend::Initialize(
     m_sdlVideoInitialized = true;
 
 #ifdef __EMSCRIPTEN__
-    GetEmscriptenCanvasPhysicalSize(m_width, m_height, m_config.highDpi);
+    GetEmscriptenCanvasPhysicalSize(m_width, m_height, m_desc.highDpi);
     const SDL_WindowFlags windowFlags = 0;
 #else
     SDL_WindowFlags windowFlags = 0;
-    if (m_config.resizable) {
+    if (m_desc.resizable) {
         windowFlags |= SDL_WINDOW_RESIZABLE;
     }
-    if (m_config.maximized) {
+    if (m_desc.maximized) {
         windowFlags |= SDL_WINDOW_MAXIMIZED;
     }
-    if (m_config.fullscreen) {
+    if (m_desc.fullscreen) {
         windowFlags |= SDL_WINDOW_FULLSCREEN;
     }
-    if (m_config.borderless) {
+    if (m_desc.borderless) {
         windowFlags |= SDL_WINDOW_BORDERLESS;
     }
-    if (m_config.highDpi) {
+    if (m_desc.highDpi) {
         windowFlags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
     }
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
 #endif
 
-    if (!SDL_CreateWindowAndRenderer(m_config.title.c_str(), m_width, m_height,
+    if (!SDL_CreateWindowAndRenderer(m_desc.title.c_str(), m_width, m_height,
                                      windowFlags, &m_window, &m_renderer)) {
 #ifndef __EMSCRIPTEN__
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, nullptr);
-        if (!SDL_CreateWindowAndRenderer(m_config.title.c_str(), m_width, m_height,
+        if (!SDL_CreateWindowAndRenderer(m_desc.title.c_str(), m_width, m_height,
                                          windowFlags, &m_window, &m_renderer)) {
             keel::eprintln("Failed to create SDL window & renderer: {}", SDL_GetError());
-            Shutdown();
+            Destroy();
             return false;
         }
 #else
         keel::eprintln("Failed to create SDL window & renderer: {}", SDL_GetError());
-        Shutdown();
+        Destroy();
         return false;
 #endif
     }
@@ -276,29 +258,29 @@ bool SdlWindowBackend::Initialize(
 
 #ifndef __EMSCRIPTEN__
     keel::f32 winCoordScale = 1.0f;
-    if (m_config.highDpi) {
+    if (m_desc.highDpi) {
         const keel::f32 rawPd = SDL_GetWindowPixelDensity(m_window);
         const keel::f32 pd = (rawPd > 0.01f) ? rawPd : 1.0f;
         winCoordScale = keel::max(1.0f, m_dpiScale / pd);
         if (winCoordScale > 1.01f) {
             SDL_SetWindowSize(
                 m_window,
-                keel::max(1, keel::round_i32(keel::as<keel::f32>(m_config.width) * winCoordScale)),
-                keel::max(1, keel::round_i32(keel::as<keel::f32>(m_config.height) * winCoordScale))
+                keel::max(1, keel::round_i32(keel::as<keel::f32>(m_desc.width) * winCoordScale)),
+                keel::max(1, keel::round_i32(keel::as<keel::f32>(m_desc.height) * winCoordScale))
             );
         }
     }
-    if (m_config.minWidth > 0 && m_config.minHeight > 0) {
+    if (m_desc.minWidth > 0 && m_desc.minHeight > 0) {
         SDL_SetWindowMinimumSize(
             m_window,
-            keel::max(1, keel::round_i32(keel::as<keel::f32>(m_config.minWidth) * winCoordScale)),
-            keel::max(1, keel::round_i32(keel::as<keel::f32>(m_config.minHeight) * winCoordScale))
+            keel::max(1, keel::round_i32(keel::as<keel::f32>(m_desc.minWidth) * winCoordScale)),
+            keel::max(1, keel::round_i32(keel::as<keel::f32>(m_desc.minHeight) * winCoordScale))
         );
     }
     SDL_SetWindowPosition(m_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 #else
-    if (m_config.minWidth > 0 && m_config.minHeight > 0) {
-        SDL_SetWindowMinimumSize(m_window, m_config.minWidth, m_config.minHeight);
+    if (m_desc.minWidth > 0 && m_desc.minHeight > 0) {
+        SDL_SetWindowMinimumSize(m_window, m_desc.minWidth, m_desc.minHeight);
     }
     SDL_SetWindowSize(m_window, m_width, m_height);
 #endif
@@ -316,43 +298,7 @@ bool SdlWindowBackend::Initialize(
     UpdateDisplayMetrics();
 
     const bool shadersAvailable = m_gpuShaderEngine.Initialize(m_renderer);
-    m_gpuShadersEnabled = m_config.gpuShaders && shadersAvailable;
-
-    if (!m_hasExplicitCanvas && m_config.canvasFactory != nullptr) {
-        if (auto custom = m_config.canvasFactory(true)) {
-            m_canvas = keel::move(custom);
-            m_usingFallbackCanvas = false;
-        }
-    } else if (m_usingFallbackCanvas && HasDefaultVectorCanvasFactory()) {
-        if (auto promoted = CreateVectorCanvas(true)) {
-            m_canvas = keel::move(promoted);
-            m_usingFallbackCanvas = false;
-        }
-    }
-    if (auto* sdlCanvas = dynamic_cast<SdlCanvas*>(m_canvas.get()); sdlCanvas != nullptr) {
-        sdlCanvas->SetRenderer(m_renderer);
-    }
-    m_canvas->SetGpuShadersEnabled(m_gpuShadersEnabled);
-
-    m_bufWidth = m_width;
-    m_bufHeight = m_height;
-    if (m_canvas->UsesCpuFramebuffer()) {
-        m_pixelBuffer.assign(keel::as<keel::usize>(m_bufWidth) * keel::as<keel::usize>(m_bufHeight), 0);
-        m_canvas->SetTarget(m_pixelBuffer.data(), m_bufWidth, m_bufHeight, m_bufWidth);
-
-        m_screenTexture = SDL_CreateTexture(
-            m_renderer,
-            ResolveSdlPixelFormat(m_canvas->GetPixelFormat()),
-            SDL_TEXTUREACCESS_STREAMING,
-            m_bufWidth,
-            m_bufHeight
-        );
-        SDL_SetTextureScaleMode(m_screenTexture, SDL_SCALEMODE_NEAREST);
-        SDL_SetTextureBlendMode(m_screenTexture, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
-    } else {
-        m_pixelBuffer.clear();
-        m_pixelBuffer.shrink_to_fit();
-    }
+    m_gpuShadersEnabled = m_desc.gpuShaders && shadersAvailable;
 
     ui.SetClipboardCallbacks(
         []() -> keel::String {
@@ -379,7 +325,7 @@ bool SdlWindowBackend::Initialize(
     return true;
 }
 
-void SdlWindowBackend::Shutdown() noexcept {
+void SdlPlatformWindow::Destroy() noexcept {
 #ifndef __EMSCRIPTEN__
     if (m_eventWatchInstalled) {
         SDL_RemoveEventWatch(&LiveResizeEventWatchThunk, this);
@@ -389,13 +335,18 @@ void SdlWindowBackend::Shutdown() noexcept {
 
     m_gpuShaderEngine.Shutdown();
 
-    if (auto* sdlCanvas = dynamic_cast<SdlCanvas*>(m_canvas.get()); sdlCanvas != nullptr) {
+    if (auto* sdlCanvas = dynamic_cast<SdlCanvas*>(m_attachedCanvas); sdlCanvas != nullptr) {
         sdlCanvas->SetRenderer(nullptr);
     }
+    m_attachedCanvas = nullptr;
+
     if (m_screenTexture != nullptr) {
         SDL_DestroyTexture(m_screenTexture);
         m_screenTexture = nullptr;
     }
+    m_texWidth = 0;
+    m_texHeight = 0;
+
     if (m_renderer != nullptr) {
         SDL_DestroyRenderer(m_renderer);
         m_renderer = nullptr;
@@ -424,7 +375,22 @@ void SdlWindowBackend::Shutdown() noexcept {
     }
 }
 
-bool SdlWindowBackend::UsesMainLoopCallback() const noexcept {
+keel::UniquePtr<ICanvas> SdlPlatformWindow::CreateDefaultCanvas() {
+    if (auto vec = CreateVectorCanvas(true)) {
+        return vec;
+    }
+    return keel::make_unique<SdlCanvas>(m_renderer);
+}
+
+void SdlPlatformWindow::AttachCanvas(ICanvas& canvas) noexcept {
+    m_attachedCanvas = &canvas;
+    if (auto* sdlCanvas = dynamic_cast<SdlCanvas*>(&canvas); sdlCanvas != nullptr) {
+        sdlCanvas->SetRenderer(m_renderer);
+    }
+    canvas.SetGpuShadersEnabled(m_gpuShadersEnabled);
+}
+
+bool SdlPlatformWindow::UsesMainLoopCallback() const noexcept {
 #ifdef __EMSCRIPTEN__
     return true;
 #else
@@ -432,12 +398,12 @@ bool SdlWindowBackend::UsesMainLoopCallback() const noexcept {
 #endif
 }
 
-void SdlWindowBackend::RunMainLoopCallback(keel::Function<bool()> stepFn) {
+void SdlPlatformWindow::RunMainLoopCallback(keel::Function<bool()> stepFn) {
 #ifdef __EMSCRIPTEN__
     m_emscriptenStepFn = keel::move(stepFn);
     emscripten_set_main_loop_arg(
         [](void* arg) {
-            auto* self = static_cast<SdlWindowBackend*>(arg);
+            auto* self = static_cast<SdlPlatformWindow*>(arg);
             if (!self->m_emscriptenStepFn || !self->m_emscriptenStepFn()) {
                 emscripten_cancel_main_loop();
             }
@@ -451,7 +417,7 @@ void SdlWindowBackend::RunMainLoopCallback(keel::Function<bool()> stepFn) {
 #endif
 }
 
-bool SdlWindowBackend::PumpEvents(Context& ui, bool reactiveMode, keel::i32 sleepTimeoutMs) {
+bool SdlPlatformWindow::PumpEvents(Context& ui, bool reactiveMode, keel::i32 sleepTimeoutMs) {
     m_skipRenderThisStep = false;
     if (m_shouldExit) {
         return false;
@@ -464,7 +430,7 @@ bool SdlWindowBackend::PumpEvents(Context& ui, bool reactiveMode, keel::i32 slee
 #ifdef __EMSCRIPTEN__
     keel::i32 targetW = m_width;
     keel::i32 targetH = m_height;
-    if (GetEmscriptenCanvasPhysicalSize(targetW, targetH, m_config.highDpi)) {
+    if (GetEmscriptenCanvasPhysicalSize(targetW, targetH, m_desc.highDpi)) {
         if (targetW != m_width || targetH != m_height) {
             SDL_SetWindowSize(m_window, targetW, targetH);
         }
@@ -520,7 +486,7 @@ bool SdlWindowBackend::PumpEvents(Context& ui, bool reactiveMode, keel::i32 slee
 #endif
 }
 
-void SdlWindowBackend::WakeUp() noexcept {
+void SdlPlatformWindow::WakeUp() noexcept {
     if (!m_sdlVideoInitialized || m_shouldExit) {
         return;
     }
@@ -531,8 +497,8 @@ void SdlWindowBackend::WakeUp() noexcept {
     }
 }
 
-bool SdlWindowBackend::LiveResizeEventWatch(void* userdata, SDL_Event* event) {
-    auto* self = static_cast<SdlWindowBackend*>(userdata);
+bool SdlPlatformWindow::LiveResizeEventWatch(void* userdata, SDL_Event* event) {
+    auto* self = static_cast<SdlPlatformWindow*>(userdata);
     if (!self || self->m_shouldExit || !self->m_boundUi || !event || !self->m_boundUi->IsLiveResizeEnabled()) {
         return true;
     }
@@ -550,7 +516,8 @@ bool SdlWindowBackend::LiveResizeEventWatch(void* userdata, SDL_Event* event) {
         return true;
     }
     if (event->type == SDL_EVENT_WINDOW_EXPOSED &&
-        (self->m_width != self->m_bufWidth || self->m_height != self->m_bufHeight)) {
+        (keel::as<keel::u32>(self->m_width) != self->m_texWidth ||
+         keel::as<keel::u32>(self->m_height) != self->m_texHeight)) {
         const keel::u64 nowNs = keel::monotonic_ns();
         const keel::f64 elapsedMs = keel::as<keel::f64>(nowNs - self->m_lastLiveResizeTimeNs) * 1e-6;
         if (elapsedMs >= 16.0 && self->m_callbacks.onLiveResizeRender) {
@@ -563,7 +530,7 @@ bool SdlWindowBackend::LiveResizeEventWatch(void* userdata, SDL_Event* event) {
     return true;
 }
 
-void SdlWindowBackend::ProcessEvent(const SDL_Event& event, Context& ui) {
+void SdlPlatformWindow::ProcessEvent(const SDL_Event& event, Context& ui) {
     switch (event.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -731,7 +698,7 @@ void SdlWindowBackend::ProcessEvent(const SDL_Event& event, Context& ui) {
             const KeyModifiers mods{ctrl, shift, alt};
             ui.SetKeyModifiers(mods);
 
-            if (m_config.debugShortcuts) {
+            if (m_desc.debugShortcuts) {
                 if ((ctrl && shift && event.key.key == SDLK_C) || (ctrl && event.key.key == SDLK_I)) {
                     ui.SetInspectMode(!ui.IsInspectMode());
                     break;
@@ -797,119 +764,102 @@ void SdlWindowBackend::ProcessEvent(const SDL_Event& event, Context& ui) {
     }
 }
 
-void SdlWindowBackend::PrepareFrameTarget(Context& ui) {
-    if (!m_canvas) {
-        return;
-    }
-    m_gpuShaderEngine.TickFrame(*m_canvas);
-    if (m_width != m_bufWidth || m_height != m_bufHeight) {
-        m_bufWidth = m_width;
-        m_bufHeight = m_height;
-        if (m_canvas->UsesCpuFramebuffer()) {
-            m_pixelBuffer.assign(keel::as<keel::usize>(m_bufWidth) * keel::as<keel::usize>(m_bufHeight), 0);
-            m_canvas->SetTarget(m_pixelBuffer.data(), m_bufWidth, m_bufHeight, m_bufWidth);
-            if (m_screenTexture) {
-                SDL_DestroyTexture(m_screenTexture);
-            }
-            m_screenTexture = SDL_CreateTexture(
-                m_renderer,
-                ResolveSdlPixelFormat(m_canvas->GetPixelFormat()),
-                SDL_TEXTUREACCESS_STREAMING,
-                m_bufWidth,
-                m_bufHeight
-            );
-            SDL_SetTextureScaleMode(m_screenTexture, SDL_SCALEMODE_NEAREST);
-            SDL_SetTextureBlendMode(m_screenTexture, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
-        } else {
-            m_pixelBuffer.clear();
-            m_pixelBuffer.shrink_to_fit();
-        }
-        ui.InvalidateAll();
-    }
-    if (!m_canvas->UsesCpuFramebuffer() && m_renderer && ui.HasDirtyDamage()) {
+void SdlPlatformWindow::BeginFrameTarget(ICanvas& canvas, Context& ui) {
+    m_gpuShaderEngine.TickFrame(canvas);
+    if (!canvas.UsesCpuFramebuffer() && m_renderer && ui.HasDirtyDamage()) {
         SDL_RenderClear(m_renderer);
     }
 }
 
-void SdlWindowBackend::PresentFrame(const Context& ui, FrameMetrics& metrics, bool /*forcePresent*/) {
-    if (!m_renderer || !m_canvas) {
+void SdlPlatformWindow::PresentCpuFramebuffer(
+    const keel::u32* pixels,
+    keel::u32 width,
+    keel::u32 height,
+    keel::u32 stride,
+    SurfacePixelFormat format,
+    keel::ArrayRef<Rect> dirtyRects,
+    bool fullRepaint,
+    ICanvas& canvas
+) noexcept {
+    if (!m_renderer || !pixels || width == 0u || height == 0u) {
         return;
     }
 
-    if (m_canvas->UsesCpuFramebuffer()) {
+    if (!m_screenTexture || m_texWidth != width || m_texHeight != height || m_texFormat != format) {
+        if (m_screenTexture) {
+            SDL_DestroyTexture(m_screenTexture);
+        }
+        m_screenTexture = SDL_CreateTexture(
+            m_renderer,
+            ResolveSdlPixelFormat(format),
+            SDL_TEXTUREACCESS_STREAMING,
+            keel::as<keel::i32>(width),
+            keel::as<keel::i32>(height)
+        );
         if (!m_screenTexture) {
             return;
         }
-        metrics.MarkGpuStart();
-        if (ui.HasDirtyDamage()) {
-            if (ui.IsFullRepaint()) {
-                SDL_UpdateTexture(m_screenTexture, nullptr, m_pixelBuffer.data(), m_width * sizeof(keel::u32));
-            } else {
-                const keel::f32 dpiScale = ui.GetPixelsPerDp();
-                for (const Rect& dr : ui.GetDirtyRects()) {
-                    const keel::i32 x1 = keel::clamp(keel::floor_i32(dr.x * dpiScale), 0, m_width);
-                    const keel::i32 y1 = keel::clamp(keel::floor_i32(dr.y * dpiScale), 0, m_height);
-                    const keel::i32 x2 = keel::clamp(keel::ceil_i32(dr.Right() * dpiScale), 0, m_width);
-                    const keel::i32 y2 = keel::clamp(keel::ceil_i32(dr.Bottom() * dpiScale), 0, m_height);
-                    if (x2 > x1 && y2 > y1) {
-                        const SDL_Rect sdlR = {x1, y1, x2 - x1, y2 - y1};
-                        const keel::u32* src = m_pixelBuffer.data() + keel::as<keel::usize>(sdlR.y) * m_width + sdlR.x;
-                        SDL_UpdateTexture(m_screenTexture, &sdlR, src, m_width * sizeof(keel::u32));
-                    }
-                }
+        SDL_SetTextureScaleMode(m_screenTexture, SDL_SCALEMODE_NEAREST);
+        SDL_SetTextureBlendMode(m_screenTexture, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+        m_texWidth = width;
+        m_texHeight = height;
+        m_texFormat = format;
+        fullRepaint = true;
+    }
+
+    const keel::i32 pitch = keel::as<keel::i32>(stride * sizeof(keel::u32));
+    if (fullRepaint || dirtyRects.empty()) {
+        SDL_UpdateTexture(m_screenTexture, nullptr, pixels, pitch);
+    } else {
+        const keel::f32 pxPerDp = m_boundUi ? m_boundUi->GetPixelsPerDp() : m_dpiScale;
+        const keel::i32 iw = keel::as<keel::i32>(width);
+        const keel::i32 ih = keel::as<keel::i32>(height);
+        for (const Rect& dr : dirtyRects) {
+            const keel::i32 x1 = keel::clamp(keel::floor_i32(dr.x * pxPerDp), 0, iw);
+            const keel::i32 y1 = keel::clamp(keel::floor_i32(dr.y * pxPerDp), 0, ih);
+            const keel::i32 x2 = keel::clamp(keel::ceil_i32(dr.Right() * pxPerDp), 0, iw);
+            const keel::i32 y2 = keel::clamp(keel::ceil_i32(dr.Bottom() * pxPerDp), 0, ih);
+            if (x2 > x1 && y2 > y1) {
+                const SDL_Rect sdlR = {x1, y1, x2 - x1, y2 - y1};
+                const keel::u32* src = pixels + keel::as<keel::usize>(sdlR.y) * stride + sdlR.x;
+                SDL_UpdateTexture(m_screenTexture, &sdlR, src, pitch);
             }
         }
-        SDL_RenderClear(m_renderer);
-        if (m_canvas->HasActiveGpuPasses()) {
-            m_gpuShaderEngine.RenderUnderlays(*m_canvas, keel::as<keel::u32>(m_width), keel::as<keel::u32>(m_height));
-        }
-        SDL_RenderTexture(m_renderer, m_screenTexture, nullptr, nullptr);
-        metrics.MarkGpuDone();
-    } else {
-        metrics.MarkGpuStart();
-        if (m_canvas->HasActiveGpuPasses()) {
-            m_gpuShaderEngine.RenderUnderlays(*m_canvas, keel::as<keel::u32>(m_width), keel::as<keel::u32>(m_height));
-        }
-        metrics.MarkGpuDone();
     }
 
+    SDL_RenderClear(m_renderer);
+    if (m_gpuShadersEnabled && canvas.HasActiveGpuPasses()) {
+        m_gpuShaderEngine.RenderUnderlays(canvas, width, height);
+    }
+    SDL_RenderTexture(m_renderer, m_screenTexture, nullptr, nullptr);
     SDL_RenderPresent(m_renderer);
-    metrics.MarkFramePresented();
 }
 
-void SdlWindowBackend::PaceFrame(keel::f64 elapsedMs, bool presented) noexcept {
-#ifndef __EMSCRIPTEN__
-    const keel::f64 targetFrameMs = 1000.0 / keel::max(1.0, keel::as<keel::f64>(m_config.targetFps));
-    if (elapsedMs + 1.0 < targetFrameMs) {
-        const keel::f64 sleepMs = presented
-            ? (targetFrameMs - elapsedMs)
-            : keel::min(4.0, targetFrameMs - elapsedMs);
-        SDL_Delay(keel::as<keel::u32>(sleepMs));
+void SdlPlatformWindow::PresentGpuFrame(ICanvas& canvas) noexcept {
+    if (!m_renderer) {
+        return;
     }
-#else
-    (void)elapsedMs;
-    (void)presented;
-#endif
+    if (m_gpuShadersEnabled && canvas.HasActiveGpuPasses()) {
+        m_gpuShaderEngine.RenderUnderlays(canvas, keel::as<keel::u32>(m_width), keel::as<keel::u32>(m_height));
+    }
+    SDL_RenderPresent(m_renderer);
 }
 
-void SdlWindowBackend::SetVsyncEnabled(bool enabled) noexcept {
+void SdlPlatformWindow::SetUnderlayShadersEnabled(bool enabled) noexcept {
+    m_gpuShadersEnabled = enabled && m_gpuShaderEngine.IsAvailable();
+    if (!m_gpuShadersEnabled) {
+        m_gpuShaderEngine.ReleaseCachedTextures();
+    }
+}
+
+void SdlPlatformWindow::SetVsyncEnabled(bool enabled) noexcept {
     m_vsyncEnabled = enabled;
     if (m_renderer != nullptr) {
         SDL_SetRenderVSync(m_renderer, m_vsyncEnabled ? 1 : 0);
     }
 }
 
-void SdlWindowBackend::SetGpuShadersEnabled(bool enabled) noexcept {
-    m_gpuShadersEnabled = enabled && m_gpuShaderEngine.IsAvailable();
-    if (m_canvas) {
-        m_canvas->SetGpuShadersEnabled(m_gpuShadersEnabled);
-    }
-    if (!m_gpuShadersEnabled) {
-        m_gpuShaderEngine.ReleaseCachedTextures();
-    }
-}
-
-void SdlWindowBackend::UpdateSystemCursor(CursorType cursor) noexcept {
+void SdlPlatformWindow::SetCursor(CursorType cursor) noexcept {
     if (cursor == m_activeCursor) {
         return;
     }
@@ -936,7 +886,7 @@ void SdlWindowBackend::UpdateSystemCursor(CursorType cursor) noexcept {
     }
 }
 
-void SdlWindowBackend::SetTextInputActive(bool active, Rect caretRectPx) noexcept {
+void SdlPlatformWindow::SetTextInputActive(bool active, Rect caretRectPx) noexcept {
     if (!m_window) {
         return;
     }
@@ -966,12 +916,12 @@ void SdlWindowBackend::SetTextInputActive(bool active, Rect caretRectPx) noexcep
     }
 }
 
-void SdlWindowBackend::OpenUrl(keel::StringRef url) const noexcept {
+void SdlPlatformWindow::OpenUrl(keel::StringRef url) const noexcept {
     const keel::SmallString<256> urlStr(url);
     SDL_OpenURL(urlStr.c_str());
 }
 
-keel::Optional<ThemeMode> SdlWindowBackend::QuerySystemTheme() const noexcept {
+keel::Optional<ThemeMode> SdlPlatformWindow::QuerySystemTheme() const noexcept {
     const SDL_SystemTheme sysTheme = SDL_GetSystemTheme();
     if (sysTheme == SDL_SYSTEM_THEME_DARK) return ThemeMode::Dark;
     if (sysTheme == SDL_SYSTEM_THEME_LIGHT) return ThemeMode::Light;
@@ -979,9 +929,9 @@ keel::Optional<ThemeMode> SdlWindowBackend::QuerySystemTheme() const noexcept {
 }
 
 namespace {
-struct SdlBackendModuleRegistrar {
-    SdlBackendModuleRegistrar() noexcept { RegisterSdlWindowBackend(); }
-} const g_sdlBackendModuleRegistrar{};
+struct SdlPlatformModuleRegistrar {
+    SdlPlatformModuleRegistrar() noexcept { RegisterSdlPlatformWindow(); }
+} const g_sdlPlatformModuleRegistrar{};
 } // namespace
 
 } // namespace guikit
