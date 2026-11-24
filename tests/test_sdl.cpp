@@ -113,8 +113,8 @@ void TestThorCanvasFontSizeAndStyles() {
     const keel::u16 numTables = be16(4);
     for (keel::u16 i = 0; i < numTables; ++i) {
         const keel::usize rec = 12 + keel::as<keel::usize>(i) * 16;
-        if (std::memcmp(d + rec, "head", 4) == 0) headOff = be32(rec + 8);
-        if (std::memcmp(d + rec, "hhea", 4) == 0) hheaOff = be32(rec + 8);
+        if (keel::mem_eq(d + rec, "head", 4)) headOff = be32(rec + 8);
+        if (keel::mem_eq(d + rec, "hhea", 4)) hheaOff = be32(rec + 8);
     }
     CHECK(headOff != 0 && hheaOff != 0);
     const keel::f32 unitsPerEm = keel::as<keel::f32>(be16(headOff + 18));

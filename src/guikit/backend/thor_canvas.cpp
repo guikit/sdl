@@ -76,7 +76,7 @@ struct ScopedCStr {
     explicit ScopedCStr(keel::StringRef sv) {
         if (sv.size() < sizeof(inlineBuf)) {
             if (!sv.empty()) {
-                std::memcpy(inlineBuf, sv.data(), sv.size());
+                keel::mem_copy(inlineBuf, sv.data(), sv.size());
             }
             inlineBuf[sv.size()] = '\0';
             ptr = inlineBuf;
@@ -702,8 +702,7 @@ Vec2 ThorCanvas::MeasureTextStyled(keel::StringRef text, keel::f32 fontSize, Fon
     const keel::f32 scaledFs = fontSize * scale;
     const keel::u32 scaleQ = keel::as<keel::u32>(keel::round_i32(scale * 1000.0f));
     h = (h ^ keel::as<keel::u64>(scaleQ)) * 1099511628211ULL;
-    keel::u32 fsBits = 0;
-    std::memcpy(&fsBits, &scaledFs, sizeof(keel::f32));
+    const keel::u32 fsBits = keel::bit_cast<keel::u32>(scaledFs);
     const FontHinting effHint = TextCompositor::ResolveEffectiveHinting(m_textSettings.hinting, scale);
     const TextMeasureKey key{
         h,
@@ -791,8 +790,7 @@ const ThorCanvas::TextMaskEntry& ThorCanvas::ResolveTextMask(
         h = (h ^ keel::as<keel::u8>(c)) * 1099511628211ULL;
     }
     const keel::f32 qFontSize = keel::max(1.0f, keel::round(scaledFontSize * 4.0f) * 0.25f);
-    keel::u32 fsBits = 0;
-    std::memcpy(&fsBits, &qFontSize, sizeof(keel::f32));
+    const keel::u32 fsBits = keel::bit_cast<keel::u32>(qFontSize);
 
     const Vec2 m = MeasureTextStyled(text, qFontSize, style);
     const keel::i32 padLeft = subpixel ? 4 : 3;
@@ -898,7 +896,7 @@ const ThorCanvas::TextMaskEntry& ThorCanvas::ResolveTextMask(
             }
             keel::u8* dstFilteredRow = m_filteredMaskScratch.data() + keel::as<keel::usize>(y) * rowSubBytes;
             if (!anyNonZero) {
-                std::memset(dstFilteredRow, 0, rowSubBytes);
+                keel::mem_zero(dstFilteredRow, rowSubBytes);
                 continue;
             }
             TextCompositor::FilterSubpixel3xRow(
@@ -929,7 +927,7 @@ const ThorCanvas::TextMaskEntry& ThorCanvas::ResolveTextMask(
             const keel::usize cropRowBytes = keel::as<keel::usize>(cropW) * 3u;
             entry.mask.resize(cropRowBytes * keel::as<keel::usize>(cropH));
             for (keel::i32 row = 0; row < cropH; ++row) {
-                std::memcpy(
+                keel::mem_copy(
                     entry.mask.data() + keel::as<keel::usize>(row) * cropRowBytes,
                     m_filteredMaskScratch.data() + keel::as<keel::usize>(minY + row) * rowSubBytes + keel::as<keel::usize>(minX) * 3u,
                     cropRowBytes
@@ -1078,7 +1076,7 @@ const ThorCanvas::ShapeStampEntry& ThorCanvas::ResolveShapeStamp(
         entry.offsetY = keel::as<keel::i16>(minY - pad);
         entry.pixels.resize(keel::as<keel::usize>(cropW) * keel::as<keel::usize>(cropH));
         for (keel::i32 row = 0; row < cropH; ++row) {
-            std::memcpy(
+            keel::mem_copy(
                 entry.pixels.data() + keel::as<keel::usize>(row) * cropW,
                 m_stampScratch.data() + keel::as<keel::usize>(minY + row) * bufW + minX,
                 keel::as<keel::usize>(cropW) * sizeof(keel::u32)
@@ -2153,7 +2151,7 @@ bool ThorCanvas::CaptureRegion(Rect rect, keel::Array<keel::u32>& outPixels, kee
     }
     outPixels.resize(totalPx);
     for (keel::i32 row = 0; row < h; ++row) {
-        std::memcpy(
+        keel::mem_copy(
             outPixels.data() + keel::as<keel::usize>(row) * outW,
             m_targetBuffer + keel::as<keel::usize>(y0 + row) * m_stride + x0,
             keel::as<keel::usize>(w) * sizeof(keel::u32)
@@ -2203,7 +2201,7 @@ bool ThorCanvas::RestoreRegion(Rect rect, PixelRef pixels) {
     const keel::i32 srcOffX = clipX0 - x0;
     for (keel::i32 y = clipY0; y < clipY1; ++y) {
         const keel::i32 srcRow = y - y0;
-        std::memcpy(
+        keel::mem_copy(
             m_targetBuffer + keel::as<keel::usize>(y) * m_stride + clipX0,
             pixels.Row(keel::as<keel::u32>(srcRow)).data() + srcOffX,
             keel::as<keel::usize>(copyW) * sizeof(keel::u32)
@@ -2252,7 +2250,7 @@ bool DecodeThorImageFromMemory(
 
 #ifdef GUIKIT_THORVG_HAS_INTERNAL_LODEPNG
     static constexpr keel::u8 kPngSignature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-    if (encodedBytes.size() >= 32 && std::memcmp(encodedBytes.data(), kPngSignature, sizeof(kPngSignature)) == 0) {
+    if (encodedBytes.size() >= 32 && keel::mem_eq(encodedBytes.data(), kPngSignature, sizeof(kPngSignature))) {
         // 1. Inspect IHDR dimensions first to guard against decompression bombs
         {
             LodePngStateGuard inspectGuard;
@@ -2300,7 +2298,7 @@ bool DecodeThorImageFromMemory(
         const keel::u8* srcBuf = decodedBytes.ptr;
 
 #if !defined(__BYTE_ORDER__) || (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
-        std::memcpy(outRgbaPixels.data(), srcBuf, totalPx * sizeof(keel::u32));
+        keel::mem_copy(outRgbaPixels.data(), srcBuf, totalPx * sizeof(keel::u32));
 #else
         for (keel::usize i = 0; i < totalPx; ++i) {
             outRgbaPixels[i] = keel::read_le32(&srcBuf[i * 4u]);
@@ -2328,8 +2326,8 @@ bool DecodeThorImageFromMemory(
     const char* mime = "png";
     if (encodedBytes.size() >= 3 && encodedBytes[0] == 0xFF && encodedBytes[1] == 0xD8) {
         mime = "jpg";
-    } else if (encodedBytes.size() >= 12 && std::memcmp(encodedBytes.data(), "RIFF", 4) == 0 &&
-               std::memcmp(encodedBytes.data() + 8, "WEBP", 4) == 0) {
+    } else if (encodedBytes.size() >= 12 && keel::mem_eq(encodedBytes.data(), "RIFF", 4) &&
+               keel::mem_eq(encodedBytes.data() + 8, "WEBP", 4)) {
         mime = "webp";
     }
 
