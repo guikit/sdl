@@ -1,6 +1,6 @@
 #include "guikit/backend/sdl_canvas.hpp"
 #include "guikit/core/text_util.hpp"
-#include "guikit/core/tokens.hpp"
+#include "guikit/style/tokens.hpp"
 #include "keel/math.h"
 #include "keel/small_array.h"
 #include "keel/string.h"

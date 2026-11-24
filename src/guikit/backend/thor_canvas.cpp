@@ -11,7 +11,7 @@
 #include <cstring>
 #include "guikit/core/assets.hpp"
 #include "guikit/core/text_util.hpp"
-#include "guikit/core/tokens.hpp"
+#include "guikit/style/tokens.hpp"
 #include "keel/algo.h"
 #include "keel/bits.h"
 #include "keel/fs.h"
