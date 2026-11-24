@@ -47,7 +47,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
                     if (guikit::Button(ui, {
                         .text = "Trigger Telemetry Pulse",
                         .icon = guikit::Icon::Flash(),
-                        .color = guikit::StateColor::Primary()
+                        .variant = guikit::UiVariant::Primary
                     })) {
                         ++pulseCount;
                     }

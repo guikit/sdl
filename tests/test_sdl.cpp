@@ -380,7 +380,7 @@ void TestThorCanvasDrawListPixelParity() {
             if (auto card = guikit::Card(ui, {.gap = 8.0f, .padding = Padding::All(14.0f)})) {
                 guikit::Heading(ui, {.label = "DrawList Regression", .level = HeadingLevel::H4});
                 if (auto row = guikit::Row(ui, {.gap = 8.0f})) {
-                    (void)guikit::Button(ui, {.text = "Primary", .color = StateColor::Primary()});
+                    (void)guikit::Button(ui, {.text = "Primary", .variant = UiVariant::Primary});
                     (void)guikit::Switch(ui, toggleOn);
                     guikit::Tag(ui, "OK", {.variant = UiVariant::Success});
                 }
