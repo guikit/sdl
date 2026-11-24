@@ -12,47 +12,47 @@ int main(int /*argc*/, char* /*argv*/[]) {
     });
 
     return app.Run([&](guikit::Context& ui) {
-        if (auto root = ui.Column({
+        if (auto root = guikit::Column(ui, {
             .padding = guikit::Padding::All(24.0f),
             .align = guikit::Alignment::Center,
             .justify = guikit::Justify::Center,
             .width = guikit::SizeMode::Stretch,
             .height = guikit::SizeMode::Stretch
         })) {
-            if (auto card = ui.Card({
+            if (auto card = guikit::Card(ui, {
                 .minWidth = 420.0f,
                 .width = guikit::SizeMode::Fit,
                 .gap = 12.0f,
                 .padding = guikit::Padding::All(20.0f)
             })) {
-                ui.Heading({
+                guikit::Heading(ui, {
                     .label = "Mission Control",
                     .description = "GuiKit C++20 Immediate-Mode Vector UI",
                     .icon = guikit::Icon::Play(),
                     .separator = guikit::HeadingSeparator::Bottom
                 });
 
-                if (auto el = ui.Element({
+                if (auto el = guikit::Element(ui, {
                     .label = "Autopilot Loop",
                     .description = "Closed-loop attitude stabilization"
                 })) {
-                    ui.Switch(autopilot);
+                    guikit::Switch(ui, autopilot);
                 }
 
-                if (auto el = ui.Element({.label = "Main Thruster Output"})) {
-                    ui.Slider(thrustPct, 0.0f, 100.0f, {.valueFormat = "%.1f %%"});
+                if (auto el = guikit::Element(ui, {.label = "Main Thruster Output"})) {
+                    guikit::Slider(ui, thrustPct, 0.0f, 100.0f, {.valueFormat = "%.1f %%"});
                 }
 
-                if (auto row = ui.Row({.gap = 8.0f, .align = guikit::Alignment::Center})) {
-                    if (ui.Button({
+                if (auto row = guikit::Row(ui, {.gap = 8.0f, .align = guikit::Alignment::Center})) {
+                    if (guikit::Button(ui, {
                         .text = "Trigger Telemetry Pulse",
                         .icon = guikit::Icon::Flash(),
                         .color = guikit::StateColor::Primary()
                     })) {
                         ++pulseCount;
                     }
-                    ui.Spacer();
-                    ui.Text(ui.Format("Pulses: {}", pulseCount), {
+                    guikit::Spacer(ui);
+                    guikit::Text(ui, ui.Format("Pulses: {}", pulseCount), {
                         .role = guikit::TextRole::CodeMedium,
                         .variant = guikit::UiVariant::Info
                     });
