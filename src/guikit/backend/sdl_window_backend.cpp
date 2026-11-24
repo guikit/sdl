@@ -303,7 +303,9 @@ bool SdlWindowBackend::Initialize(
     SDL_SetWindowSize(m_window, m_width, m_height);
 #endif
     SDL_SetRenderVSync(m_renderer, m_vsyncEnabled ? 1 : 0);
-    SDL_StartTextInput(m_window);
+    m_textInputActive = false;
+    m_lastImeCaretPx = {};
+    m_pendingDropFiles.clear();
 
     keel::i32 actualW = m_width;
     keel::i32 actualH = m_height;
@@ -399,7 +401,10 @@ void SdlWindowBackend::Shutdown() noexcept {
         m_renderer = nullptr;
     }
     if (m_window != nullptr) {
-        SDL_StopTextInput(m_window);
+        if (m_textInputActive) {
+            SDL_StopTextInput(m_window);
+            m_textInputActive = false;
+        }
         SDL_DestroyWindow(m_window);
         m_window = nullptr;
     }
@@ -594,6 +599,7 @@ void SdlWindowBackend::ProcessEvent(const SDL_Event& event, Context& ui) {
             break;
 
         case SDL_EVENT_WINDOW_FOCUS_LOST:
+            ui.OnTextCompositionEnd();
             ui.SetKeyModifiers({false, false, false});
             if (m_pressedMouseMask != 0) {
                 for (keel::i32 btn = 1; btn <= 8; ++btn) {
@@ -671,6 +677,44 @@ void SdlWindowBackend::ProcessEvent(const SDL_Event& event, Context& ui) {
             ui.OnTextInput(event.text.text);
             break;
         }
+
+        case SDL_EVENT_TEXT_EDITING: {
+            const char* preedit = event.edit.text ? event.edit.text : "";
+            ui.OnTextComposition(
+                keel::StringRef(preedit),
+                keel::as<keel::i32>(event.edit.start),
+                keel::as<keel::i32>(event.edit.length)
+            );
+            break;
+        }
+
+        case SDL_EVENT_DROP_BEGIN:
+            m_pendingDropFiles.clear();
+            m_pendingDropPos = ToPhysicalMousePos(event.drop.x, event.drop.y);
+            break;
+
+        case SDL_EVENT_DROP_POSITION:
+            m_pendingDropPos = ToPhysicalMousePos(event.drop.x, event.drop.y);
+            break;
+
+        case SDL_EVENT_DROP_FILE:
+            if (event.drop.data && event.drop.data[0] != '\0') {
+                m_pendingDropPos = ToPhysicalMousePos(event.drop.x, event.drop.y);
+                m_pendingDropFiles.push_back(keel::String(event.drop.data));
+            }
+            break;
+
+        case SDL_EVENT_DROP_COMPLETE:
+            if (!m_pendingDropFiles.empty()) {
+                keel::Array<keel::StringRef> refs;
+                refs.reserve(m_pendingDropFiles.size());
+                for (const keel::String& s : m_pendingDropFiles) {
+                    refs.push_back(s.as_ref());
+                }
+                ui.OnFilesDropped(refs.as_ref(), m_pendingDropPos);
+                m_pendingDropFiles.clear();
+            }
+            break;
 
         case SDL_EVENT_KEY_UP: {
             const bool ctrl = (event.key.mod & SDL_KMOD_CTRL) != 0;
@@ -889,6 +933,36 @@ void SdlWindowBackend::UpdateSystemCursor(CursorType cursor) noexcept {
     }
     if (m_cursors[idx] != nullptr) {
         SDL_SetCursor(m_cursors[idx]);
+    }
+}
+
+void SdlWindowBackend::SetTextInputActive(bool active, Rect caretRectPx) noexcept {
+    if (!m_window) {
+        return;
+    }
+    if (active != m_textInputActive) {
+        m_textInputActive = active;
+        if (active) {
+            SDL_StartTextInput(m_window);
+        } else {
+            SDL_StopTextInput(m_window);
+            m_lastImeCaretPx = {};
+        }
+    }
+    if (active &&
+        (keel::abs(caretRectPx.x - m_lastImeCaretPx.x) > 0.5f ||
+         keel::abs(caretRectPx.y - m_lastImeCaretPx.y) > 0.5f ||
+         keel::abs(caretRectPx.w - m_lastImeCaretPx.w) > 0.5f ||
+         keel::abs(caretRectPx.h - m_lastImeCaretPx.h) > 0.5f)) {
+        m_lastImeCaretPx = caretRectPx;
+        const keel::f32 pd = (m_windowPixelDensity > 0.01f) ? m_windowPixelDensity : 1.0f;
+        const SDL_Rect area{
+            keel::round_i32(caretRectPx.x / pd),
+            keel::round_i32(caretRectPx.y / pd),
+            keel::max(1, keel::round_i32(caretRectPx.w / pd)),
+            keel::max(1, keel::round_i32(caretRectPx.h / pd))
+        };
+        SDL_SetTextInputArea(m_window, &area, 0);
     }
 }
 

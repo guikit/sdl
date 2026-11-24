@@ -45,6 +45,13 @@ public:
         keel::StringRef mimeType = "ttf"
     ) override;
 
+    bool AddFallbackFontMemory(
+        keel::ArrayRef<keel::u8> data,
+        bool copyData = true
+    ) override;
+
+    void ClearFallbackFonts() noexcept override;
+
     // ICanvas implementation
     void Begin(keel::u32 width, keel::u32 height, keel::f32 scale = 1.0f) override;
     void End() override;

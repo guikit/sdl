@@ -68,6 +68,7 @@ public:
     void SetGpuShadersEnabled(bool enabled) noexcept override;
 
     void UpdateSystemCursor(CursorType cursor) noexcept override;
+    void SetTextInputActive(bool active, Rect caretRectPx) noexcept override;
     void OpenUrl(keel::StringRef url) const noexcept override;
     [[nodiscard]] keel::Optional<ThemeMode> QuerySystemTheme() const noexcept override;
 
@@ -123,6 +124,11 @@ private:
 
     keel::StaticArray<SDL_Cursor*, 9> m_cursors{};
     CursorType m_activeCursor = CursorType::Default;
+
+    bool m_textInputActive = false;
+    Rect m_lastImeCaretPx{};
+    keel::Array<keel::String> m_pendingDropFiles;
+    Vec2 m_pendingDropPos{};
 };
 
 /// Creates a new `SdlWindowBackend` instance using the default registered vector canvas.

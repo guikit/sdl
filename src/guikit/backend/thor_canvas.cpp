@@ -337,6 +337,35 @@ bool ThorCanvas::LoadFontMemory(
     return LoadFontMemoryInternal(name, data, style, mimeType, true);
 }
 
+bool ThorCanvas::AddFallbackFontMemory(
+    keel::ArrayRef<keel::u8> data,
+    bool copyData
+) {
+#if GUIKIT_HAS_TEXT_RASTERIZER
+    if (m_ftEngine && m_ftEngine->IsAvailable()) {
+        if (m_ftEngine->AddFallbackFontMemory(data, copyData)) {
+            m_textMeasureCache.clear();
+            m_textStampCache.Clear();
+            return true;
+        }
+    }
+#else
+    (void)data;
+    (void)copyData;
+#endif
+    return false;
+}
+
+void ThorCanvas::ClearFallbackFonts() noexcept {
+#if GUIKIT_HAS_TEXT_RASTERIZER
+    if (m_ftEngine) {
+        m_ftEngine->ClearFallbackFonts();
+    }
+#endif
+    m_textMeasureCache.clear();
+    m_textStampCache.Clear();
+}
+
 bool ThorCanvas::LoadFontFile(keel::StringRef path, FontStyle style) {
     if (path.empty()) return false;
 
