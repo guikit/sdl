@@ -454,6 +454,7 @@ void ThorCanvas::Begin(keel::u32 width, keel::u32 height, keel::f32 scale) {
     m_transformStack.clear();
     m_clipStack.clear();
     m_gpuClipStack.clear();
+    m_roundedClipStack.clear();
     if (m_width != width || m_height != height) {
         m_width = width;
         m_height = height;
@@ -564,21 +565,78 @@ void ThorCanvas::PushClip(Rect clipRect) {
     SyncViewportClip();
 }
 
+void ThorCanvas::PushRoundedClip(Rect clipRect, keel::f32 cornerRadius) {
+    PushClip(clipRect);
+    const Rect mapped = Px(clipRect);
+    const keel::f32 rPx = cornerRadius * m_scale;
+    if (rPx > 0.5f && mapped.w > 0.0f && mapped.h > 0.0f) {
+        const keel::f32 clampedR = keel::min(rPx, keel::min(mapped.w, mapped.h) * 0.5f);
+        m_roundedClipStack.push_back(RoundedClipEntry{
+            mapped,
+            clampedR,
+            m_clipStack.size()
+        });
+    }
+}
+
 void ThorCanvas::PopClip() {
+    const keel::usize poppedDepth = m_clipStack.size();
     if (!m_clipStack.empty()) {
         m_clipStack.pop_back();
     }
     if (!m_gpuClipStack.empty()) {
         m_gpuClipStack.pop_back();
     }
+    while (!m_roundedClipStack.empty() && m_roundedClipStack.back().depth >= poppedDepth) {
+        m_roundedClipStack.pop_back();
+    }
     SyncViewportClip();
 }
 
-void ThorCanvas::ApplyClip(tvg::Paint* paint, keel::Optional<Rect> bounds) {
-    // Hardware/engine integer viewport clipping is synchronized on PushClip/PopClip via m_canvas->viewport(),
-    // so per-paint RLE clip masks are never needed for rectangular stack clips.
-    (void)paint;
-    (void)bounds;
+namespace {
+
+[[nodiscard]] bool RectTouchesRoundedClip(const Rect& b, const Rect& r, keel::f32 rad) noexcept {
+    if (b.x < r.x || b.y < r.y || b.Right() > r.Right() || b.Bottom() > r.Bottom()) {
+        return true;
+    }
+    return b.Intersects(Rect(r.x, r.y, rad, rad)) ||
+           b.Intersects(Rect(r.Right() - rad, r.y, rad, rad)) ||
+           b.Intersects(Rect(r.x, r.Bottom() - rad, rad, rad)) ||
+           b.Intersects(Rect(r.Right() - rad, r.Bottom() - rad, rad, rad));
+}
+
+} // namespace
+
+bool ThorCanvas::TouchesRoundedClipCorner(Rect boundsPx) const noexcept {
+    for (const RoundedClipEntry& rc : m_roundedClipStack) {
+        if (RectTouchesRoundedClip(boundsPx, rc.rect, rc.radius)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ThorCanvas::AddPaint(tvg::Paint* paint, keel::Optional<Rect> boundsPx, bool alreadyClipped) {
+    if (!paint || !m_canvas) return;
+    if (!m_roundedClipStack.empty()) {
+        bool hasClip = alreadyClipped;
+        for (const RoundedClipEntry& rc : m_roundedClipStack) {
+            if (boundsPx.has_value() && !RectTouchesRoundedClip(*boundsPx, rc.rect, rc.radius)) {
+                continue;
+            }
+            if (hasClip) {
+                auto* scene = tvg::Scene::gen();
+                scene->add(paint);
+                paint = scene;
+            }
+            auto* clipper = tvg::Shape::gen();
+            clipper->appendRect(rc.rect.x, rc.rect.y, rc.rect.w, rc.rect.h, rc.radius, rc.radius);
+            paint->clip(clipper);
+            hasClip = true;
+        }
+    }
+    m_canvas->add(paint);
+    m_hasPendingPaints = true;
 }
 
 void ThorCanvas::DrawRect(Rect rect, Color fill) {
@@ -591,7 +649,7 @@ void ThorCanvas::DrawRect(Rect rect, Color fill) {
         if (sRect.w <= 0.0f || sRect.h <= 0.0f) return;
     }
 
-    if (m_targetBuffer && m_width > 0 && m_height > 0) {
+    if (m_targetBuffer && m_width > 0 && m_height > 0 && !TouchesRoundedClipCorner(sRect)) {
         const keel::i32 x0 = keel::clamp(keel::round_i32(sRect.x), 0, keel::as<keel::i32>(m_width));
         const keel::i32 y0 = keel::clamp(keel::round_i32(sRect.y), 0, keel::as<keel::i32>(m_height));
         const keel::i32 x1 = keel::clamp(keel::round_i32(sRect.Right()), 0, keel::as<keel::i32>(m_width));
@@ -626,8 +684,7 @@ void ThorCanvas::DrawRect(Rect rect, Color fill) {
     auto shape = tvg::Shape::gen();
     shape->appendRect(sRect.x, sRect.y, sRect.w, sRect.h);
     shape->fill(fill.r, fill.g, fill.b, fill.a);
-    m_canvas->add(shape);
-    m_hasPendingPaints = true;
+    AddPaint(shape, sRect);
 }
 
 void ThorCanvas::DrawRoundRect(
@@ -686,6 +743,7 @@ void ThorCanvas::DrawRoundRect(
     }
 
     if (m_targetBuffer && m_width > 0 && m_height > 0 &&
+        !TouchesRoundedClipCorner(outerBounds) &&
         ((sRect.w <= 180.0f && sRect.h <= 52.0f) || (sRect.w <= 72.0f && sRect.h <= 72.0f))) {
         const keel::i32 qx = keel::round_i32(sRect.x * 4.0f);
         const keel::i32 qy = keel::round_i32(sRect.y * 4.0f);
@@ -710,8 +768,7 @@ void ThorCanvas::DrawRoundRect(
         shape->strokeFill(stroke.r, stroke.g, stroke.b, stroke.a);
     }
 
-    m_canvas->add(shape);
-    m_hasPendingPaints = true;
+    AddPaint(shape, outerBounds);
 }
 
 Vec2 ThorCanvas::MeasureText(keel::StringRef text, keel::f32 fontSize) {
@@ -1271,34 +1328,36 @@ void ThorCanvas::DrawTextStyled(
         if (!m_clipStack.empty() && !approxBounds.Intersects(m_clipStack.back())) {
             return;
         }
-        const keel::f32 scaledFs = fontSize * m_scale;
+        if (!TouchesRoundedClipCorner(approxBounds)) {
+            const keel::f32 scaledFs = fontSize * m_scale;
 #if GUIKIT_HAS_TEXT_RASTERIZER
-        if (m_ftEngine && m_ftEngine->HasFontForStyle(style)) {
-            Rect clipPx(0.0f, 0.0f, keel::as<keel::f32>(m_width), keel::as<keel::f32>(m_height));
-            if (!m_clipStack.empty()) {
-                clipPx = clipPx.Intersect(m_clipStack.back());
-            }
-            if (clipPx.w > 0.0f && clipPx.h > 0.0f) {
-                FlushCanvas();
-                if (m_ftEngine->DrawText(
-                        m_targetBuffer, m_width, m_height, m_stride,
-                        stampText, PxX(pos.x), PxY(pos.y), scaledFs,
-                        color, style, clipPx, m_textSettings, m_scale)) {
+            if (m_ftEngine && m_ftEngine->HasFontForStyle(style)) {
+                Rect clipPx(0.0f, 0.0f, keel::as<keel::f32>(m_width), keel::as<keel::f32>(m_height));
+                if (!m_clipStack.empty()) {
+                    clipPx = clipPx.Intersect(m_clipStack.back());
+                }
+                if (clipPx.w > 0.0f && clipPx.h > 0.0f) {
+                    FlushCanvas();
+                    if (m_ftEngine->DrawText(
+                            m_targetBuffer, m_width, m_height, m_stride,
+                            stampText, PxX(pos.x), PxY(pos.y), scaledFs,
+                            color, style, clipPx, m_textSettings, m_scale)) {
+                        return;
+                    }
+                } else {
                     return;
                 }
-            } else {
-                return;
             }
-        }
 #endif
-        const FontSmoothing effSmooth = TextCompositor::ResolveEffectiveSmoothing(m_textSettings.smoothing, m_scale);
-        const bool useSubpixel = (effSmooth == FontSmoothing::SubpixelRGB || effSmooth == FontSmoothing::SubpixelBGR);
-        const bool bgrOrder = (effSmooth == FontSmoothing::SubpixelBGR);
-        const keel::i32 dstX = keel::round_i32(PxX(pos.x));
-        const keel::i32 dstY = keel::round_i32(PxY(pos.y));
-        const TextMaskEntry& mask = ResolveTextMask(stampText, scaledFs, style, useSubpixel);
-        BlitTextMask(mask, dstX, dstY, color, scaledFs, bgrOrder);
-        return;
+            const FontSmoothing effSmooth = TextCompositor::ResolveEffectiveSmoothing(m_textSettings.smoothing, m_scale);
+            const bool useSubpixel = (effSmooth == FontSmoothing::SubpixelRGB || effSmooth == FontSmoothing::SubpixelBGR);
+            const bool bgrOrder = (effSmooth == FontSmoothing::SubpixelBGR);
+            const keel::i32 dstX = keel::round_i32(PxX(pos.x));
+            const keel::i32 dstY = keel::round_i32(PxY(pos.y));
+            const TextMaskEntry& mask = ResolveTextMask(stampText, scaledFs, style, useSubpixel);
+            BlitTextMask(mask, dstX, dstY, color, scaledFs, bgrOrder);
+            return;
+        }
     }
 
     const bool isItalic = NeedsSyntheticItalic(style);
@@ -1326,8 +1385,7 @@ void ThorCanvas::DrawTextStyled(
         }
         txt->translate(PxX(pos.x + offset * cosA), PxY(pos.y + offset * sinA));
 
-        m_canvas->add(txt);
-        m_hasPendingPaints = true;
+        AddPaint(txt);
     };
 
     emitTextPass(0.0f);
@@ -1372,7 +1430,8 @@ void ThorCanvas::DrawTextBoxStyled(
     if (drawText.empty()) return;
 
     if (m_targetBuffer && m_width > 0 && m_height > 0 &&
-        drawText.find('\n') == keel::StringRef::npos) {
+        drawText.find('\n') == keel::StringRef::npos &&
+        !TouchesRoundedClipCorner(sBounds)) {
         const keel::StringRef stampText = ClampUtf8Prefix(drawText, 512);
         const keel::f32 scaledFs = fontSize * m_scale;
 #if GUIKIT_HAS_TEXT_RASTERIZER
@@ -1442,8 +1501,7 @@ void ThorCanvas::DrawTextBoxStyled(
         txt->align(alignX, alignY);
         txt->translate(sBounds.x + offsetX * m_scale, sBounds.y);
 
-        m_canvas->add(txt);
-        m_hasPendingPaints = true;
+        AddPaint(txt, sBounds);
     };
     emitBoxPass(0.0f);
     if (isBold) {
@@ -1526,8 +1584,14 @@ void ThorCanvas::DrawLine(Vec2 p1, Vec2 p2, Color color, keel::f32 strokeWidth) 
     shape->strokeCap(tvg::StrokeCap::Round);
     shape->strokeFill(color.r, color.g, color.b, color.a);
 
-    m_canvas->add(shape);
-    m_hasPendingPaints = true;
+    const keel::f32 linePad = sWidth * 0.5f + 1.0f;
+    const Rect lineBounds(
+        keel::min(sp1.x, sp2.x) - linePad,
+        keel::min(sp1.y, sp2.y) - linePad,
+        keel::abs(sp2.x - sp1.x) + linePad * 2.0f,
+        keel::abs(sp2.y - sp1.y) + linePad * 2.0f
+    );
+    AddPaint(shape, lineBounds);
 }
 
 void ThorCanvas::DrawTriangle(
@@ -1569,8 +1633,7 @@ void ThorCanvas::DrawTriangle(
         shape->strokeFill(stroke.r, stroke.g, stroke.b, stroke.a);
     }
 
-    m_canvas->add(shape);
-    m_hasPendingPaints = true;
+    AddPaint(shape, triBounds);
 }
 
 void ThorCanvas::DrawPath(const VectorPath& path, const PathPaint& paint) {
@@ -1645,8 +1708,7 @@ void ThorCanvas::DrawPath(const VectorPath& path, const PathPaint& paint) {
         }
     }
 
-    m_canvas->add(shape);
-    m_hasPendingPaints = true;
+    AddPaint(shape);
 }
 
 ThorCanvas::ImageCacheEntry& ThorCanvas::ResolveImageEntry(keel::StringRef source) {
@@ -1835,7 +1897,7 @@ bool ThorCanvas::DrawImage(
                 return false;
             }
         }
-        if (sRad <= 0.0f && m_targetBuffer) {
+        if (sRad <= 0.0f && m_targetBuffer && !TouchesRoundedClipCorner(sBounds)) {
             return DrawPixels({entry.cachedPixels, cacheW, cacheH}, destRect, 0.0f, opacity);
         }
         auto* pic = tvg::Picture::gen();
@@ -1868,8 +1930,7 @@ bool ThorCanvas::DrawImage(
             clipper->appendRect(clipR.x, clipR.y, clipR.w, clipR.h, effRad, effRad);
             pic->clip(clipper);
         }
-        m_canvas->add(pic);
-        m_hasPendingPaints = true;
+        AddPaint(pic, sBounds, sRad > 0.0f);
         return true;
     }
 
@@ -1925,8 +1986,7 @@ bool ThorCanvas::DrawImage(
         pic->clip(clipper);
     }
 
-    m_canvas->add(pic);
-    m_hasPendingPaints = true;
+    AddPaint(pic, sBounds, sRad > 0.0f);
     return true;
 }
 
@@ -1945,7 +2005,7 @@ bool ThorCanvas::DrawPixels(
 
     const keel::f32 sRad = keel::max(0.0f, cornerRadius * m_scale);
     Rect sBounds(Px(destRect));
-    if (sRad <= 0.0f) {
+    if (sRad <= 0.0f && !TouchesRoundedClipCorner(sBounds)) {
         const keel::i32 dstX0 = keel::round_i32(sBounds.x);
         const keel::i32 dstY0 = keel::round_i32(sBounds.y);
         const keel::i32 dstX1 = keel::round_i32(sBounds.Right());
@@ -2076,8 +2136,7 @@ bool ThorCanvas::DrawPixels(
         pic->clip(clipper);
     }
 
-    m_canvas->add(pic);
-    m_hasPendingPaints = true;
+    AddPaint(pic, sBounds, sRad > 0.0f);
     return true;
 }
 

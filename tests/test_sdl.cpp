@@ -286,6 +286,31 @@ void TestThorCanvasStampLruAndOverlayZOrder() {
         const keel::u32 px = pixels[120u * W + 160u];
         CHECK((px & 0xFFu) < 40u && ((px >> 8) & 0xFFu) > 180u && ((px >> 16) & 0xFFu) < 80u);
     }
+
+    // PushRoundedClip: rectangular fill inside rounded clip must leave outer corner pixels untouched
+    {
+        constexpr keel::u32 W = 80, H = 80;
+        keel::Array<keel::u32> pixels(W * H, 0u);
+        ThorCanvas canvas;
+        CHECK(canvas.SupportsRoundedClip());
+        canvas.SetTarget(pixels.data(), W, H, W);
+        canvas.Begin(W, H, 1.0f);
+        const Color bg(10, 20, 30, 255);
+        const Color fg(240, 60, 40, 255);
+        canvas.Clear(bg);
+        canvas.PushRoundedClip(Rect(10.0f, 10.0f, 60.0f, 60.0f), 16.0f);
+        canvas.DrawRect(Rect(10.0f, 10.0f, 60.0f, 60.0f), fg);
+        canvas.PopClip();
+        canvas.End();
+
+        const keel::u32 bgRaw = bg.ToUint32();
+        const keel::u32 centerPx = pixels[40u * W + 40u];
+        CHECK((centerPx & 0xFFu) > 220u && ((centerPx >> 8) & 0xFFu) < 80u);
+        CHECK(pixels[10u * W + 10u] == bgRaw);
+        CHECK(pixels[10u * W + 69u] == bgRaw);
+        CHECK(pixels[69u * W + 10u] == bgRaw);
+        CHECK(pixels[69u * W + 69u] == bgRaw);
+    }
 }
 
 #endif // GUIKIT_HAS_BACKEND_THORVG

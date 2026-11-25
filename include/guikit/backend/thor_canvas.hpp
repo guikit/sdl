@@ -67,7 +67,9 @@ public:
     [[nodiscard]] keel::StringRef GetBackendName() const noexcept override { return "ThorVG (Vector Software)"; }
     void Clear(Color color, keel::Optional<Rect> rect = keel::kNullOpt) override;
 
+    [[nodiscard]] bool SupportsRoundedClip() const noexcept override { return true; }
     void PushClip(Rect clipRect) override;
+    void PushRoundedClip(Rect clipRect, keel::f32 cornerRadius) override;
     void PopClip() override;
 
     void DrawRect(Rect rect, Color fill) override;
@@ -182,7 +184,8 @@ private:
     );
     [[nodiscard]] bool NeedsSyntheticBold(FontStyle style) const noexcept;
     [[nodiscard]] bool NeedsSyntheticItalic(FontStyle style) const noexcept;
-    void ApplyClip(tvg::Paint* paint, keel::Optional<Rect> bounds = keel::kNullOpt);
+    [[nodiscard]] bool TouchesRoundedClipCorner(Rect boundsPx) const noexcept;
+    void AddPaint(tvg::Paint* paint, keel::Optional<Rect> boundsPx = keel::kNullOpt, bool alreadyClipped = false);
     void ApplyFont(tvg::Text* txt, FontStyle style) const;
 
     // Logical -> physical pixel mapping: p * m_scale + m_offset (scale and translation only)
@@ -220,8 +223,15 @@ private:
 
     keel::Array<GpuShaderPassDesc> m_gpuPasses;
 
+    struct RoundedClipEntry {
+        Rect rect{};
+        keel::f32 radius{0.0f};
+        keel::usize depth{0};
+    };
+
     keel::Array<Rect> m_clipStack;
     keel::Array<Rect> m_gpuClipStack;
+    keel::Array<RoundedClipEntry> m_roundedClipStack;
 
     struct FontSlot {
         keel::String name;
