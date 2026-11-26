@@ -771,6 +771,83 @@ void ThorCanvas::DrawRoundRect(
     AddPaint(shape, outerBounds);
 }
 
+void ThorCanvas::DrawGradientRoundRect(
+    Rect rect,
+    keel::f32 radius,
+    const Gradient& fill,
+    Color stroke,
+    keel::f32 strokeWidth,
+    const Gradient* strokeGradient
+) {
+    if (rect.w <= 0.0f || rect.h <= 0.0f || !m_canvas) return;
+    const bool hasFill = fill.HasVisibleColor();
+    const bool hasStrokeGrad = (strokeGradient != nullptr && strokeGradient->HasVisibleColor());
+    const bool hasStroke = (strokeWidth > 0.0f) && (stroke.a > 0u || hasStrokeGrad);
+    if (!hasFill && !hasStroke) return;
+
+    const Rect sRect(Px(rect));
+    const keel::f32 sRadius = keel::clamp(radius * m_scale, 0.0f, keel::min(sRect.w, sRect.h) * 0.5f);
+    const keel::f32 sStrokeW = hasStroke ? (strokeWidth * m_scale) : 0.0f;
+    const keel::f32 pad = (sStrokeW > 0.0f) ? (sStrokeW * 0.5f + 1.0f) : 1.0f;
+    const Rect outerBounds(sRect.x - pad, sRect.y - pad, sRect.w + pad * 2.0f, sRect.h + pad * 2.0f);
+    if (!m_clipStack.empty()) {
+        const Rect& cr = m_clipStack.back();
+        if (cr.w <= 0.0f || cr.h <= 0.0f || !outerBounds.Intersects(cr)) return;
+    }
+
+    auto makeTvgFill = [&sRect](const Gradient& g) -> tvg::Fill* {
+        const keel::u8 n = (g.stopCount > 4u) ? 4u : g.stopCount;
+        if (n < 2u) return nullptr;
+        tvg::Fill::ColorStop stops[4]{};
+        for (keel::u8 i = 0u; i < n; ++i) {
+            stops[i] = {
+                g.stops[i].offset,
+                g.stops[i].color.r,
+                g.stops[i].color.g,
+                g.stops[i].color.b,
+                g.stops[i].color.a
+            };
+        }
+        if (g.kind == GradientKind::Radial) {
+            auto* rg = tvg::RadialGradient::gen();
+            const keel::f32 cx = sRect.x + g.start.x * sRect.w;
+            const keel::f32 cy = sRect.y + g.start.y * sRect.h;
+            const keel::f32 rPx = keel::max(1.0f, g.end.x * keel::max(sRect.w, sRect.h) * 0.5f);
+            rg->radial(cx, cy, rPx, cx, cy, 0.0f);
+            rg->colorStops(stops, n);
+            return rg;
+        }
+        auto* lg = tvg::LinearGradient::gen();
+        lg->linear(
+            sRect.x + g.start.x * sRect.w,
+            sRect.y + g.start.y * sRect.h,
+            sRect.x + g.end.x * sRect.w,
+            sRect.y + g.end.y * sRect.h
+        );
+        lg->colorStops(stops, n);
+        return lg;
+    };
+
+    auto* shape = tvg::Shape::gen();
+    shape->appendRect(sRect.x, sRect.y, sRect.w, sRect.h, sRadius, sRadius);
+    if (hasFill) {
+        if (tvg::Fill* tf = makeTvgFill(fill)) {
+            shape->fill(tf);
+        }
+    }
+    if (hasStroke) {
+        shape->strokeWidth(sStrokeW);
+        if (hasStrokeGrad) {
+            if (tvg::Fill* sf = makeTvgFill(*strokeGradient)) {
+                shape->strokeFill(sf);
+            }
+        } else {
+            shape->strokeFill(stroke.r, stroke.g, stroke.b, stroke.a);
+        }
+    }
+    AddPaint(shape, outerBounds);
+}
+
 Vec2 ThorCanvas::MeasureText(keel::StringRef text, keel::f32 fontSize) {
     return MeasureTextStyled(text, fontSize, FontStyle::Regular);
 }

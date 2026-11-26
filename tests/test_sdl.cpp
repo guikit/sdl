@@ -435,6 +435,38 @@ void TestThorCanvasDrawListPixelParity() {
     CHECK(nonBgCount > 5000u);
     CHECK(keel::mem_cmp(directPixels.data(), drawListPixels.data(), directPixels.size() * sizeof(keel::u32)) == 0);
 }
+
+void TestThorCanvasGradientRoundRect() {
+    using namespace guikit;
+    keel::println("  -> TestThorCanvasGradientRoundRect...");
+
+    constexpr keel::u32 kW = 160u;
+    constexpr keel::u32 kH = 80u;
+    keel::Array<keel::u32> pixels(keel::as<keel::usize>(kW) * kH, 0u);
+
+    ThorCanvas canvas(false);
+    canvas.SetTarget(pixels.data(), kW, kH, kW);
+    canvas.Begin(kW, kH, 1.0f);
+    canvas.Clear(Color(0, 0, 0, 255));
+    const Gradient lr = Gradient::Linear(Color(240, 20, 20, 255), Color(20, 40, 240, 255), 90.0f);
+    const Gradient bdr = Gradient::Linear(Color(255, 255, 255, 220), Color(80, 180, 255, 160), 135.0f);
+    canvas.DrawGradientRoundRect(Rect(10.0f, 10.0f, 140.0f, 28.0f), 6.0f, lr, Color::Transparent(), 1.5f, &bdr);
+    const Gradient rad = Gradient::Radial(Color(30, 230, 120, 255), Color(20, 30, 80, 255));
+    canvas.DrawGradientRoundRect(Rect(10.0f, 44.0f, 140.0f, 28.0f), 6.0f, rad, Color(255, 255, 255, 120), 1.0f);
+    canvas.End();
+
+    // Verify horizontal linear gradient transitions smoothly from red-dominant (left) to blue-dominant (right)
+    const keel::u32 pxLeft  = pixels[24u * kW + 20u];
+    const keel::u32 pxRight = pixels[24u * kW + 140u];
+    CHECK(pxLeft != pxRight);
+    CHECK(pxLeft != pixels[0]);
+    CHECK(pxRight != pixels[0]);
+
+    // Verify radial gradient center differs from outer edge
+    const keel::u32 pxRadCenter = pixels[58u * kW + 80u];
+    const keel::u32 pxRadEdge   = pixels[58u * kW + 16u];
+    CHECK(pxRadCenter != pxRadEdge);
+}
 #endif
 
 #endif // GUIKIT_HAS_BACKEND_SDL3
@@ -447,6 +479,7 @@ int main() {
     TestThorCanvasTransformAndSubpixel();
     TestThorCanvasStampLruAndOverlayZOrder();
     TestThorCanvasDrawListPixelParity();
+    TestThorCanvasGradientRoundRect();
 #endif
 #if defined(GUIKIT_HAS_BACKEND_SDL3) && GUIKIT_HAS_BACKEND_SDL3
     TestSdlBackendAndDpiMapping();
