@@ -84,6 +84,8 @@ public:
     [[nodiscard]] bool SupportsCustomTitleBar() const noexcept override;
     [[nodiscard]] bool IsCustomTitleBar() const noexcept override;
     bool SetCustomTitleBar(bool enabled) noexcept override;
+    void SetWindowCornerStyle(WindowCornerStyle style) noexcept override;
+    void SetWindowBorderColor(keel::Optional<Color> color) noexcept override;
 
     [[nodiscard]] bool SupportsFileDialogs() const noexcept override;
     FileDialogResult ShowFileDialog(const FileDialogOptions& opts) override;

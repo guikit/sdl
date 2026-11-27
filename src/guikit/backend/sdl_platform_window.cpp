@@ -66,6 +66,7 @@ struct SdlWin32DwmMargins {
     keel::i32 cyBottomHeight;
 };
 using PfnSdlDwmExtendFrame = HRESULT(WINAPI*)(HWND, const SdlWin32DwmMargins*);
+using PfnSdlDwmSetWindowAttr = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
 
 void ApplyWin32CustomTitleBarShadow(SDL_Window* window, bool enabled) noexcept {
     if (!window) return;
@@ -78,6 +79,20 @@ void ApplyWin32CustomTitleBarShadow(SDL_Window* window, bool enabled) noexcept {
     if (extendFn) {
         const SdlWin32DwmMargins margins{0, 0, 0, enabled ? 1 : 0};
         (void)extendFn(hwnd, &margins);
+    }
+    ::FreeLibrary(dwm);
+}
+
+void ApplyWin32DwmAttr(SDL_Window* window, DWORD attr, DWORD value) noexcept {
+    if (!window) return;
+    const SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (!hwnd) return;
+    HMODULE dwm = ::LoadLibraryW(L"dwmapi.dll");
+    if (!dwm) return;
+    auto setAttr = reinterpret_cast<PfnSdlDwmSetWindowAttr>(::GetProcAddress(dwm, "DwmSetWindowAttribute"));
+    if (setAttr) {
+        (void)setAttr(hwnd, attr, &value, sizeof(value));
     }
     ::FreeLibrary(dwm);
 }
@@ -1193,6 +1208,36 @@ bool SdlPlatformWindow::SetCustomTitleBar(bool enabled) noexcept {
         }
     }
     return true;
+#endif
+}
+
+void SdlPlatformWindow::SetWindowCornerStyle(WindowCornerStyle style) noexcept {
+#if defined(_WIN32)
+    DWORD pref = 0u;
+    switch (style) {
+        case WindowCornerStyle::Square:     pref = 1u; break; // DWMWCP_DONOTROUND
+        case WindowCornerStyle::Round:      pref = 2u; break; // DWMWCP_ROUND
+        case WindowCornerStyle::RoundSmall: pref = 3u; break; // DWMWCP_ROUNDSMALL
+        case WindowCornerStyle::Auto:
+        default:                            pref = 0u; break; // DWMWCP_DEFAULT
+    }
+    ApplyWin32DwmAttr(m_window, 33u, pref);
+#else
+    (void)style;
+#endif
+}
+
+void SdlPlatformWindow::SetWindowBorderColor(keel::Optional<Color> color) noexcept {
+#if defined(_WIN32)
+    DWORD ref = 0xFFFFFFFFu;
+    if (color.has_value() && color->a > 0u) {
+        ref = keel::as<DWORD>(color->r) |
+              (keel::as<DWORD>(color->g) << 8u) |
+              (keel::as<DWORD>(color->b) << 16u);
+    }
+    ApplyWin32DwmAttr(m_window, 34u, ref);
+#else
+    (void)color;
 #endif
 }
 
