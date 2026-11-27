@@ -61,6 +61,9 @@ public:
     void Begin(keel::u32 width, keel::u32 height, keel::f32 scale = 1.0f) override;
     void End() override;
     [[nodiscard]] keel::f32 GetScale() const noexcept override { return m_scale; }
+    [[nodiscard]] Transform2D GetPixelTransform() const noexcept override {
+        return Transform2D{m_scale, m_offset};
+    }
     void SetScale(keel::f32 scale) override { m_scale = (scale > 0.0f) ? scale : 1.0f; }
     void PushTransform(const Transform2D& transform) override;
     void PopTransform() override;
