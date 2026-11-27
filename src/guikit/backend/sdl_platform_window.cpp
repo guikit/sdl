@@ -59,6 +59,29 @@ bool SDLCALL LiveResizeEventWatchThunk(void* userdata, SDL_Event* event) {
 #endif
 
 #if defined(_WIN32)
+struct SdlWin32DwmMargins {
+    keel::i32 cxLeftWidth;
+    keel::i32 cxRightWidth;
+    keel::i32 cyTopHeight;
+    keel::i32 cyBottomHeight;
+};
+using PfnSdlDwmExtendFrame = HRESULT(WINAPI*)(HWND, const SdlWin32DwmMargins*);
+
+void ApplyWin32CustomTitleBarShadow(SDL_Window* window, bool enabled) noexcept {
+    if (!window) return;
+    const SDL_PropertiesID props = SDL_GetWindowProperties(window);
+    HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+    if (!hwnd) return;
+    HMODULE dwm = ::LoadLibraryW(L"dwmapi.dll");
+    if (!dwm) return;
+    auto extendFn = reinterpret_cast<PfnSdlDwmExtendFrame>(::GetProcAddress(dwm, "DwmExtendFrameIntoClientArea"));
+    if (extendFn) {
+        const SdlWin32DwmMargins margins{0, 0, 0, enabled ? 1 : 0};
+        (void)extendFn(hwnd, &margins);
+    }
+    ::FreeLibrary(dwm);
+}
+
 keel::f32 QueryHdcPixelsPerMm(HDC hdc) noexcept {
     if (hdc == nullptr) {
         return 0.0f;
@@ -107,7 +130,130 @@ bool GetEmscriptenCanvasPhysicalSize(keel::i32& outW, keel::i32& outH, bool high
     }
 }
 
+[[nodiscard]] keel::String NormalizeSdlFilterPattern(keel::StringRef pattern) {
+    // Convert "*.cpp;*.hpp;*.h" or "*.*" into SDL3's bare-extension format ("cpp;hpp;h" / "*")
+    keel::String out;
+    keel::usize pos = 0u;
+    while (pos < pattern.size()) {
+        keel::usize sep = pattern.find(';', pos);
+        if (sep == keel::StringRef::npos) sep = pattern.size();
+        keel::StringRef tok = pattern.substr(pos, sep - pos).trim();
+        if (!tok.empty()) {
+            if (tok == "*.*" || tok == "*") {
+                tok = "*";
+            } else {
+                if (tok.size() >= 2u && tok[0] == '*' && tok[1] == '.') {
+                    tok = tok.substr(2u);
+                } else if (tok.size() >= 1u && tok[0] == '.') {
+                    tok = tok.substr(1u);
+                }
+            }
+            if (!tok.empty()) {
+                if (!out.empty()) out.push_back(';');
+                out.append(tok);
+            }
+        }
+        pos = (sep < pattern.size()) ? (sep + 1u) : pattern.size();
+    }
+    if (out.empty()) {
+        out.assign("*");
+    }
+    return out;
+}
+
+#ifndef __EMSCRIPTEN__
+SDL_HitTestResult SDLCALL SdlCustomTitleBarHitTest(
+    SDL_Window* /*win*/,
+    const SDL_Point* area,
+    void* userdata
+) {
+    auto* self = static_cast<SdlPlatformWindow*>(userdata);
+    if (!self || !area) {
+        return SDL_HITTEST_NORMAL;
+    }
+    const Vec2 phys = SdlWindowToPhysicalPixels(
+        {keel::as<keel::f32>(area->x), keel::as<keel::f32>(area->y)},
+        self->GetSdlWindow() ? SDL_GetWindowPixelDensity(self->GetSdlWindow()) : 1.0f
+    );
+    const keel::f32 dpi = self->GetDpiScale();
+    const keel::f32 safeDpi = (dpi > 0.1f) ? dpi : 1.0f;
+    const Vec2 logical{phys.x / safeDpi, phys.y / safeDpi};
+    switch (self->DispatchHitTest(logical)) {
+        case WindowHitRegion::Caption:           return SDL_HITTEST_DRAGGABLE;
+        case WindowHitRegion::ResizeTopLeft:     return SDL_HITTEST_RESIZE_TOPLEFT;
+        case WindowHitRegion::ResizeTop:         return SDL_HITTEST_RESIZE_TOP;
+        case WindowHitRegion::ResizeTopRight:    return SDL_HITTEST_RESIZE_TOPRIGHT;
+        case WindowHitRegion::ResizeRight:       return SDL_HITTEST_RESIZE_RIGHT;
+        case WindowHitRegion::ResizeBottomRight: return SDL_HITTEST_RESIZE_BOTTOMRIGHT;
+        case WindowHitRegion::ResizeBottom:      return SDL_HITTEST_RESIZE_BOTTOM;
+        case WindowHitRegion::ResizeBottomLeft:  return SDL_HITTEST_RESIZE_BOTTOMLEFT;
+        case WindowHitRegion::ResizeLeft:        return SDL_HITTEST_RESIZE_LEFT;
+        case WindowHitRegion::MinimizeButton:
+        case WindowHitRegion::MaximizeButton:
+        case WindowHitRegion::CloseButton:
+        case WindowHitRegion::Client:
+        default:                                 return SDL_HITTEST_NORMAL;
+    }
+}
+#endif
+
 } // namespace
+
+struct SdlPlatformWindow::AsyncDialogState {
+    struct CompletedEntry {
+        FileDialogResult result{};
+        keel::Function<void(FileDialogResult)> onDone{};
+    };
+
+    SDL_AtomicInt refCount{1};
+    SDL_Mutex* mutex{nullptr};
+    SdlPlatformWindow* owner{nullptr};
+    bool windowAlive{true};
+    keel::Array<CompletedEntry> completed;
+
+    explicit AsyncDialogState(SdlPlatformWindow* win) noexcept : owner(win) {
+        SDL_SetAtomicInt(&refCount, 1);
+        mutex = SDL_CreateMutex();
+    }
+    ~AsyncDialogState() {
+        if (mutex) {
+            SDL_DestroyMutex(mutex);
+            mutex = nullptr;
+        }
+    }
+
+    void Retain() noexcept {
+        (void)SDL_AddAtomicInt(&refCount, 1);
+    }
+
+    static void Release(AsyncDialogState* state) noexcept {
+        if (!state) return;
+        if (SDL_AddAtomicInt(&state->refCount, -1) == 1) {
+            delete state;
+        }
+    }
+
+    void DetachOwner() noexcept {
+        if (mutex) SDL_LockMutex(mutex);
+        windowAlive = false;
+        owner = nullptr;
+        completed.clear();
+        if (mutex) SDL_UnlockMutex(mutex);
+    }
+
+    void EnqueueCompleted(FileDialogResult res, keel::Function<void(FileDialogResult)> onDone) {
+        if (!mutex) return;
+        SDL_LockMutex(mutex);
+        if (windowAlive && owner) {
+            completed.push_back(CompletedEntry{
+                .result = keel::move(res),
+                .onDone = keel::move(onDone)
+            });
+            owner->WakeUp();
+        }
+        SDL_UnlockMutex(mutex);
+    }
+};
 
 keel::f32 QueryDisplayPixelsPerMm(SDL_Window* window) noexcept {
 #if defined(_WIN32)
@@ -228,7 +374,7 @@ bool SdlPlatformWindow::Create(
     if (m_desc.fullscreen) {
         windowFlags |= SDL_WINDOW_FULLSCREEN;
     }
-    if (m_desc.borderless) {
+    if (m_desc.borderless || (m_desc.customTitleBar && !m_desc.fullscreen)) {
         windowFlags |= SDL_WINDOW_BORDERLESS;
     }
     if (m_desc.highDpi) {
@@ -317,7 +463,16 @@ bool SdlPlatformWindow::Create(
     m_lastLiveResizeTimeNs = keel::monotonic_ns();
     m_lastEmscriptenRenderTimeNs = m_lastLiveResizeTimeNs;
 
+    m_dialogState = new AsyncDialogState(this);
+    m_focused = true;
+
 #ifndef __EMSCRIPTEN__
+    if (m_desc.customTitleBar && !m_desc.fullscreen) {
+        (void)SDL_SetWindowHitTest(m_window, &SdlCustomTitleBarHitTest, this);
+#if defined(_WIN32)
+        ApplyWin32CustomTitleBarShadow(m_window, true);
+#endif
+    }
     SDL_AddEventWatch(&LiveResizeEventWatchThunk, this);
     m_eventWatchInstalled = true;
 #endif
@@ -352,12 +507,20 @@ void SdlPlatformWindow::Destroy() noexcept {
         m_renderer = nullptr;
     }
     if (m_window != nullptr) {
+#ifndef __EMSCRIPTEN__
+        (void)SDL_SetWindowHitTest(m_window, nullptr, nullptr);
+#endif
         if (m_textInputActive) {
             SDL_StopTextInput(m_window);
             m_textInputActive = false;
         }
         SDL_DestroyWindow(m_window);
         m_window = nullptr;
+    }
+    if (m_dialogState != nullptr) {
+        m_dialogState->DetachOwner();
+        AsyncDialogState::Release(m_dialogState);
+        m_dialogState = nullptr;
     }
 
     for (SDL_Cursor*& cur : m_cursors) {
@@ -426,6 +589,7 @@ bool SdlPlatformWindow::PumpEvents(Context& ui, bool reactiveMode, keel::i32 sle
     if (AtomicExchangeU32(m_wakePending, 0u) != 0u) {
         ui.RequestRepaint(1);
     }
+    FlushCompletedDialogs(ui);
 
 #ifdef __EMSCRIPTEN__
     keel::i32 targetW = m_width;
@@ -482,6 +646,7 @@ bool SdlPlatformWindow::PumpEvents(Context& ui, bool reactiveMode, keel::i32 sle
     if (AtomicExchangeU32(m_wakePending, 0u) != 0u) {
         ui.RequestRepaint(1);
     }
+    FlushCompletedDialogs(ui);
     return !m_shouldExit;
 #endif
 }
@@ -565,7 +730,14 @@ void SdlPlatformWindow::ProcessEvent(const SDL_Event& event, Context& ui) {
             ui.RequestRepaint(2);
             break;
 
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+            m_focused = true;
+            ui.InvalidateAll();
+            ui.RequestRepaint(2);
+            break;
+
         case SDL_EVENT_WINDOW_FOCUS_LOST:
+            m_focused = false;
             ui.OnTextCompositionEnd();
             ui.SetKeyModifiers({false, false, false});
             if (m_pressedMouseMask != 0) {
@@ -577,7 +749,8 @@ void SdlPlatformWindow::ProcessEvent(const SDL_Event& event, Context& ui) {
                 m_pressedMouseMask = 0;
                 SDL_CaptureMouse(false);
             }
-            ui.RequestRepaint(1);
+            ui.InvalidateAll();
+            ui.RequestRepaint(2);
             break;
 
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
@@ -919,6 +1092,362 @@ void SdlPlatformWindow::SetTextInputActive(bool active, Rect caretRectPx) noexce
 void SdlPlatformWindow::OpenUrl(keel::StringRef url) const noexcept {
     const keel::SmallString<256> urlStr(url);
     SDL_OpenURL(urlStr.c_str());
+}
+
+WindowHitRegion SdlPlatformWindow::DispatchHitTest(Vec2 logicalPos) const noexcept {
+    if (m_callbacks.onHitTest) {
+        return m_callbacks.onHitTest(logicalPos);
+    }
+    if (m_boundUi) {
+        return m_boundUi->ResolveWindowHitRegion(logicalPos);
+    }
+    return WindowHitRegion::Client;
+}
+
+void SdlPlatformWindow::SetTitle(keel::StringRef title) noexcept {
+    if (!m_window) return;
+    const keel::String titleStr = keel::String::from(title);
+    SDL_SetWindowTitle(m_window, titleStr.c_str());
+}
+
+void SdlPlatformWindow::Minimize() noexcept {
+    if (m_window) {
+        SDL_MinimizeWindow(m_window);
+    }
+}
+
+void SdlPlatformWindow::Maximize() noexcept {
+    if (m_window) {
+        SDL_MaximizeWindow(m_window);
+    }
+}
+
+void SdlPlatformWindow::Restore() noexcept {
+    if (m_window) {
+        SDL_RestoreWindow(m_window);
+    }
+}
+
+void SdlPlatformWindow::RequestClose() noexcept {
+    if (!m_callbacks.onCloseRequested || m_callbacks.onCloseRequested()) {
+        m_shouldExit = true;
+    }
+}
+
+bool SdlPlatformWindow::IsMaximized() const noexcept {
+    if (!m_window) return false;
+    return (SDL_GetWindowFlags(m_window) & SDL_WINDOW_MAXIMIZED) != 0;
+}
+
+bool SdlPlatformWindow::IsFocused() const noexcept {
+    if (!m_window) return m_focused;
+    return m_focused && ((SDL_GetWindowFlags(m_window) & SDL_WINDOW_INPUT_FOCUS) != 0);
+}
+
+bool SdlPlatformWindow::SupportsCustomTitleBar() const noexcept {
+#ifdef __EMSCRIPTEN__
+    return false;
+#else
+    return true;
+#endif
+}
+
+bool SdlPlatformWindow::IsCustomTitleBar() const noexcept {
+#ifdef __EMSCRIPTEN__
+    return false;
+#else
+    return m_desc.customTitleBar && !m_desc.fullscreen;
+#endif
+}
+
+bool SdlPlatformWindow::SetCustomTitleBar(bool enabled) noexcept {
+#ifdef __EMSCRIPTEN__
+    (void)enabled;
+    return false;
+#else
+    if (!m_window || m_desc.fullscreen) {
+        return false;
+    }
+    if (m_desc.customTitleBar == enabled) {
+        return true;
+    }
+    m_desc.customTitleBar = enabled;
+    (void)SDL_SetWindowBordered(m_window, !enabled);
+    (void)SDL_SetWindowHitTest(
+        m_window,
+        enabled ? &SdlCustomTitleBarHitTest : nullptr,
+        enabled ? this : nullptr
+    );
+#if defined(_WIN32)
+    ApplyWin32CustomTitleBarShadow(m_window, enabled);
+#endif
+    keel::i32 actualW = m_width;
+    keel::i32 actualH = m_height;
+    if (SDL_GetWindowSizeInPixels(m_window, &actualW, &actualH) && actualW > 0 && actualH > 0) {
+        if (actualW != m_width || actualH != m_height) {
+            m_width = actualW;
+            m_height = actualH;
+            if (m_callbacks.onResize) {
+                m_callbacks.onResize(m_width, m_height);
+            }
+        }
+    }
+    return true;
+#endif
+}
+
+bool SdlPlatformWindow::SupportsFileDialogs() const noexcept {
+#ifdef __EMSCRIPTEN__
+    return false;
+#else
+    return m_window != nullptr;
+#endif
+}
+
+void SdlPlatformWindow::FlushCompletedDialogs(Context& ui) {
+    if (!m_dialogState || !m_dialogState->mutex) {
+        return;
+    }
+    keel::Array<AsyncDialogState::CompletedEntry> ready;
+    SDL_LockMutex(m_dialogState->mutex);
+    if (!m_dialogState->completed.empty()) {
+        ready = keel::move(m_dialogState->completed);
+        m_dialogState->completed.clear();
+    }
+    SDL_UnlockMutex(m_dialogState->mutex);
+
+    if (!ready.empty()) {
+        ui.ResetMouseButtonsAfterModalDialog();
+        for (auto& item : ready) {
+            if (item.onDone) {
+                item.onDone(keel::move(item.result));
+            }
+        }
+        ui.InvalidateAll();
+        ui.RequestRepaint(2);
+    }
+}
+
+namespace {
+
+struct SdlDialogRequest {
+    keel::Function<void(FileDialogResult)> onDone{};
+    keel::Array<keel::String> filterNames;
+    keel::Array<keel::String> filterPatterns;
+    keel::Array<SDL_DialogFileFilter> sdlFilters;
+    keel::String defaultLoc;
+    bool isSync{false};
+    SDL_AtomicInt syncDone{0};
+    FileDialogResult* syncOut{nullptr};
+    void* retainedDialogState{nullptr};
+    void (*enqueueAndRelease)(void* state, FileDialogResult res, keel::Function<void(FileDialogResult)> onDone){nullptr};
+};
+
+void SDLCALL OnSdlFileDialogFinished(void* userdata, const char* const* filelist, int /*filter*/) { // keel-lint: ignore
+    auto* req = static_cast<SdlDialogRequest*>(userdata);
+    if (!req) return;
+
+    FileDialogResult res{};
+    res.supported = true;
+    if (filelist != nullptr) {
+        for (keel::usize i = 0u; filelist[i] != nullptr; ++i) {
+            if (filelist[i][0] != '\0') {
+                res.paths.push_back(keel::String(filelist[i]));
+            }
+        }
+        res.accepted = !res.paths.empty();
+    }
+
+    if (req->isSync) {
+        if (req->syncOut) {
+            *(req->syncOut) = keel::move(res);
+        }
+        SDL_SetAtomicInt(&req->syncDone, 1);
+        return; // Sync caller deletes `req` after observing syncDone == 1
+    }
+
+    if (req->retainedDialogState && req->enqueueAndRelease) {
+        req->enqueueAndRelease(req->retainedDialogState, keel::move(res), keel::move(req->onDone));
+    }
+    delete req;
+}
+
+void LaunchSdlFileDialog(
+    SDL_Window* window,
+    const FileDialogOptions& opts,
+    SdlDialogRequest* req
+) {
+    if (!opts.defaultPath.empty()) {
+        req->defaultLoc = keel::String::from(opts.defaultPath);
+        if (opts.kind == FileDialogKind::SaveFile && !opts.defaultName.empty()) {
+            if (req->defaultLoc.back() != '/' && req->defaultLoc.back() != '\\') {
+                req->defaultLoc.push_back('/');
+            }
+            req->defaultLoc.append(opts.defaultName);
+        }
+    } else if (opts.kind == FileDialogKind::SaveFile && !opts.defaultName.empty()) {
+        req->defaultLoc = keel::String::from(opts.defaultName);
+    }
+
+    if (opts.kind != FileDialogKind::SelectFolder && !opts.filters.empty()) {
+        req->filterNames.reserve(opts.filters.size());
+        req->filterPatterns.reserve(opts.filters.size());
+        req->sdlFilters.reserve(opts.filters.size());
+        for (const FileDialogFilter& f : opts.filters) {
+            if (f.pattern.empty()) continue;
+            req->filterNames.push_back(keel::String::from(f.name.empty() ? f.pattern : f.name));
+            req->filterPatterns.push_back(NormalizeSdlFilterPattern(f.pattern));
+            req->sdlFilters.push_back(SDL_DialogFileFilter{
+                .name = req->filterNames.back().c_str(),
+                .pattern = req->filterPatterns.back().c_str()
+            });
+        }
+    }
+
+    const char* defaultLocPtr = req->defaultLoc.empty() ? nullptr : req->defaultLoc.c_str();
+    const SDL_DialogFileFilter* filtersPtr = req->sdlFilters.empty() ? nullptr : req->sdlFilters.data();
+    const keel::i32 filterCount = keel::as<keel::i32>(req->sdlFilters.size());
+
+    switch (opts.kind) {
+        case FileDialogKind::OpenFile:
+            SDL_ShowOpenFileDialog(&OnSdlFileDialogFinished, req, window, filtersPtr, filterCount, defaultLocPtr, false);
+            break;
+        case FileDialogKind::OpenFiles:
+            SDL_ShowOpenFileDialog(&OnSdlFileDialogFinished, req, window, filtersPtr, filterCount, defaultLocPtr, true);
+            break;
+        case FileDialogKind::SaveFile:
+            SDL_ShowSaveFileDialog(&OnSdlFileDialogFinished, req, window, filtersPtr, filterCount, defaultLocPtr);
+            break;
+        case FileDialogKind::SelectFolder:
+            SDL_ShowOpenFolderDialog(&OnSdlFileDialogFinished, req, window, defaultLocPtr, false);
+            break;
+    }
+}
+
+} // namespace
+
+void SdlPlatformWindow::ShowFileDialogAsync(
+    const FileDialogOptions& opts,
+    keel::Function<void(FileDialogResult)> onDone
+) {
+#ifdef __EMSCRIPTEN__
+    (void)opts;
+    if (onDone) {
+        onDone(FileDialogResult{.accepted = false, .supported = false, .paths = {}});
+    }
+#else
+    if (!m_window || !m_dialogState) {
+        if (onDone) {
+            onDone(FileDialogResult{.accepted = false, .supported = false, .paths = {}});
+        }
+        return;
+    }
+    auto* req = new SdlDialogRequest{};
+    m_dialogState->Retain();
+    req->retainedDialogState = m_dialogState;
+    req->enqueueAndRelease = [](void* rawState, FileDialogResult res, keel::Function<void(FileDialogResult)> cb) {
+        auto* st = static_cast<AsyncDialogState*>(rawState);
+        if (!st) return;
+        st->EnqueueCompleted(keel::move(res), keel::move(cb));
+        AsyncDialogState::Release(st);
+    };
+    req->onDone = keel::move(onDone);
+    req->isSync = false;
+    LaunchSdlFileDialog(m_window, opts, req);
+#endif
+}
+
+FileDialogResult SdlPlatformWindow::ShowFileDialog(const FileDialogOptions& opts) {
+#ifdef __EMSCRIPTEN__
+    (void)opts;
+    return FileDialogResult{.accepted = false, .supported = false, .paths = {}};
+#else
+    if (!m_window) {
+        return FileDialogResult{.accepted = false, .supported = false, .paths = {}};
+    }
+    FileDialogResult out{};
+    out.supported = true;
+    auto* req = new SdlDialogRequest{};
+    req->isSync = true;
+    req->syncOut = &out;
+    SDL_SetAtomicInt(&req->syncDone, 0);
+
+    LaunchSdlFileDialog(m_window, opts, req);
+
+    // Wait without dispatching into Context (avoids re-entrancy inside BeginFrame/EndFrame)
+    while (SDL_GetAtomicInt(&req->syncDone) == 0) {
+        SDL_PumpEvents();
+        SDL_Delay(8u);
+    }
+    delete req;
+    if (m_pressedMouseMask != 0u) {
+        m_pressedMouseMask = 0u;
+        SDL_CaptureMouse(false);
+    }
+    return out;
+#endif
+}
+
+MessageBoxChoice SdlPlatformWindow::ShowMessageBox(const MessageBoxOptions& opts) {
+    SDL_MessageBoxFlags flags = 0u;
+    switch (opts.icon) {
+        case MessageBoxIcon::Error:    flags |= SDL_MESSAGEBOX_ERROR; break;
+        case MessageBoxIcon::Warning:  flags |= SDL_MESSAGEBOX_WARNING; break;
+        case MessageBoxIcon::Info:
+        case MessageBoxIcon::Question:
+        default:                       flags |= SDL_MESSAGEBOX_INFORMATION; break;
+    }
+
+    SDL_MessageBoxButtonData buttons[3]{};
+    keel::i32 numButtons = 0;
+    auto pushBtn = [&](SDL_MessageBoxButtonFlags bf, MessageBoxChoice choice, const char* text) {
+        buttons[numButtons++] = SDL_MessageBoxButtonData{
+            .flags = bf,
+            .buttonID = keel::as<keel::i32>(choice),
+            .text = text
+        };
+    };
+
+    switch (opts.buttons) {
+        case MessageBoxButtons::Ok:
+            pushBtn(SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, MessageBoxChoice::Ok, "OK");
+            break;
+        case MessageBoxButtons::OkCancel:
+            pushBtn(SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, MessageBoxChoice::Ok, "OK");
+            pushBtn(SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, MessageBoxChoice::Cancel, "Cancel");
+            break;
+        case MessageBoxButtons::YesNo:
+            pushBtn(SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, MessageBoxChoice::Yes, "Yes");
+            pushBtn(SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, MessageBoxChoice::No, "No");
+            break;
+        case MessageBoxButtons::YesNoCancel:
+            pushBtn(SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, MessageBoxChoice::Yes, "Yes");
+            pushBtn(0u, MessageBoxChoice::No, "No");
+            pushBtn(SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, MessageBoxChoice::Cancel, "Cancel");
+            break;
+    }
+
+    const keel::String titleStr = keel::String::from(opts.title.empty() ? keel::StringRef("Message") : opts.title);
+    const keel::String msgStr = keel::String::from(opts.message);
+    const SDL_MessageBoxData data{
+        .flags = flags,
+        .window = m_window,
+        .title = titleStr.c_str(),
+        .message = msgStr.c_str(),
+        .numbuttons = numButtons,
+        .buttons = buttons,
+        .colorScheme = nullptr
+    };
+
+    keel::i32 buttonId = keel::as<keel::i32>(MessageBoxChoice::Cancel);
+    if (!SDL_ShowMessageBox(&data, &buttonId)) {
+        return MessageBoxChoice::Cancel;
+    }
+    if (m_pressedMouseMask != 0u) {
+        m_pressedMouseMask = 0u;
+        SDL_CaptureMouse(false);
+    }
+    return keel::from_underlying<MessageBoxChoice>(keel::as<keel::u8>(buttonId));
 }
 
 keel::Optional<ThemeMode> SdlPlatformWindow::QuerySystemTheme() const noexcept {

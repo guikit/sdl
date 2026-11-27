@@ -73,11 +73,32 @@ public:
     void SetCursor(CursorType cursor) noexcept override;
     void SetTextInputActive(bool active, Rect caretRectPx) noexcept override;
     void OpenUrl(keel::StringRef url) const noexcept override;
+
+    void SetTitle(keel::StringRef title) noexcept override;
+    void Minimize() noexcept override;
+    void Maximize() noexcept override;
+    void Restore() noexcept override;
+    void RequestClose() noexcept override;
+    [[nodiscard]] bool IsMaximized() const noexcept override;
+    [[nodiscard]] bool IsFocused() const noexcept override;
+    [[nodiscard]] bool SupportsCustomTitleBar() const noexcept override;
+    [[nodiscard]] bool IsCustomTitleBar() const noexcept override;
+    bool SetCustomTitleBar(bool enabled) noexcept override;
+
+    [[nodiscard]] bool SupportsFileDialogs() const noexcept override;
+    FileDialogResult ShowFileDialog(const FileDialogOptions& opts) override;
+    void ShowFileDialogAsync(
+        const FileDialogOptions& opts,
+        keel::Function<void(FileDialogResult)> onDone
+    ) override;
+    MessageBoxChoice ShowMessageBox(const MessageBoxOptions& opts) override;
+
     [[nodiscard]] keel::Optional<ThemeMode> QuerySystemTheme() const noexcept override;
     [[nodiscard]] keel::StringRef GetPlatformName() const noexcept override { return "SDL3"; }
 
     [[nodiscard]] SDL_Window* GetSdlWindow() const noexcept { return m_window; }
     [[nodiscard]] SDL_Renderer* GetSdlRenderer() const noexcept { return m_renderer; }
+    [[nodiscard]] WindowHitRegion DispatchHitTest(Vec2 logicalPos) const noexcept;
     [[nodiscard]] SdlGlShaderEngine& GetShaderEngine() noexcept { return m_gpuShaderEngine; }
     [[nodiscard]] const SdlGlShaderEngine& GetShaderEngine() const noexcept { return m_gpuShaderEngine; }
     static bool LiveResizeEventWatch(void* userdata, SDL_Event* event);
@@ -88,6 +109,11 @@ private:
         return SdlWindowToPhysicalPixels({x, y}, m_windowPixelDensity);
     }
     void ProcessEvent(const SDL_Event& event, Context& ui);
+    void FlushCompletedDialogs(Context& ui);
+
+    struct AsyncDialogState;
+    AsyncDialogState* m_dialogState = nullptr;
+    bool m_focused = true;
 
     PlatformWindowDesc m_desc{};
     WindowHostCallbacks m_callbacks{};
